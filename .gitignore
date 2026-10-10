@@ -1,0 +1,18 @@
+# Generated applications, archives, and test output.
+/dist/
+/test-output/
+*.dSYM/
+
+# macOS metadata and local editor settings.
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local secrets and diagnostic logs must not become public source.
+.env
+.env.*
+!.env.example
+*.log

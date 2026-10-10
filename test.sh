@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+ym_root="$(cd "$(dirname "$0")" && pwd)"
+ym_stage="$(mktemp -d "${TMPDIR:-/tmp}/Yomado-policy-tests.XXXXXX")"
+trap 'rm -rf "$ym_stage"' EXIT
+
+if [ -n "${YOMADO_DEVELOPER_DIR:-}" ]; then
+  ym_developer="$YOMADO_DEVELOPER_DIR"
+else
+  ym_developer="$(xcode-select -p)"
+fi
+ym_clang="$(DEVELOPER_DIR="$ym_developer" /usr/bin/xcrun --find clang)"
+ym_sdk="$(DEVELOPER_DIR="$ym_developer" /usr/bin/xcrun --sdk macosx --show-sdk-path)"
+
+"$ym_clang" -fobjc-arc -Wall -Wextra -Werror -isysroot "$ym_sdk" -mmacosx-version-min=14.0 \
+  -ffile-prefix-map="$ym_root"=. -fmacro-prefix-map="$ym_root"=. \
+  -I "$ym_root/app" "$ym_root/tests/PolicyTests.m" -framework Foundation \
+  -o "$ym_stage/PolicyTests"
+"$ym_stage/PolicyTests"
