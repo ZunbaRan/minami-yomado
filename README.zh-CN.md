@@ -1,10 +1,14 @@
-# Yomado · 夜窗
+# yomado · 夜窗
 
 给 macOS 上的图形 Agent 一块虚拟屏。
 
 [English](README.md) · [MIT 许可证](LICENSE)
 
 Yomado 为 Blender、Marvelous Designer 等应用创建额外的 macOS 显示器。把 Agent 需要的窗口移过去，再用现有的截图和电脑操作工具工作，无需购买其他显示器工具。
+
+![yomado 使用示意：两台熄屏的实体显示器、保持运行的 Mac，以及右侧显示三维和服装设计窗口的虚拟桌面。](docs/images/yomado-usage.png)
+
+*AI 生成的使用示意：Agent 工作窗口位于虚拟屏；实体屏关闭后的实际操作仍待验证。*
 
 **这是使用 macOS 私有 API 的实验原型。** 系统更新可能影响兼容性。目标是让实体显示器关闭后仍能进行图形工作；实体屏实际待机、节电效果、关闭实体输出后的 Agent 操作，以及长期无人值守运行，**目前都没有完成验证**。
 
@@ -109,5 +113,7 @@ bash ./test.sh
 贡献代码时，应区分创建虚拟屏、修改显示拓扑，以及验证真实目标应用操作。诊断记录不要包含密钥或私人工作流信息；自动化中不要运行会修改显示配置的测试。
 
 ## 许可证
+
+[标志与使用示意图](docs/images/PROMPTS.md) 由 image generation 生成，仓库附有对应提示词。
 
 [MIT](LICENSE)。

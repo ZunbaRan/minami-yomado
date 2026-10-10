@@ -1,10 +1,14 @@
-# Yomado
+# yomado
 
 A virtual display for graphical agents on macOS.
 
 [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
 Yomado gives applications such as Blender and Marvelous Designer an additional macOS display. Move the windows your agent needs onto it, then use your existing screenshot and computer-control tools to work there. No paid display utility is required.
+
+![yomado usage concept: two dark physical monitors, an awake Mac, and a virtual desktop on the right with 3D and garment-design windows.](docs/images/yomado-usage.png)
+
+*AI-generated usage illustration. Agent work belongs on the virtual display; operation with physical monitors off is still under validation.*
 
 **Experimental prototype:** Yomado uses private macOS APIs. Compatibility can change with a system update. The goal is to keep graphical work available with a physical monitor off; actual monitor standby, power savings, agent operation after physical output is disabled, and long unattended operation have **not** been validated.
 
@@ -109,5 +113,7 @@ The implementation uses private `CGVirtualDisplay` classes and dynamically disco
 Contributions should preserve the distinction between creating a virtual display, changing display topology, and verifying real target-app operation. Keep diagnostics free of secrets and personal workflow data, and avoid running display-changing tests in automation.
 
 ## License
+
+The [logo and usage illustration](docs/images/PROMPTS.md) were created with image generation; their prompts are included for reference.
 
 [MIT](LICENSE).
