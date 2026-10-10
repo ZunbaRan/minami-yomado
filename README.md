@@ -1,10 +1,14 @@
 # yomado
 
-A virtual display for graphical agents on macOS.
+A virtual display for visual computer use by Codex and other agents on macOS.
 
 [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
-Yomado gives applications such as Blender and Marvelous Designer an additional macOS display. Move the windows your agent needs onto it, then use your existing screenshot and computer-control tools to work there. No paid display utility is required.
+## Why yomado exists
+
+yomado is built for **visual computer use**: Codex and other agents read screenshots, interpret the interface, and use the mouse and keyboard to operate desktop applications directly, without requiring an application-specific MCP integration. This matters for applications such as Marvelous Designer and Blender, especially when a workflow has no suitable MCP interface or needs interaction with a visible viewport, menu, or dialog.
+
+These workflows still need a graphical desktop and a display surface for applications to render into. yomado provides a software virtual display for the windows an agent needs, with the goal of keeping those interfaces available while the Mac continues running and its physical monitors are off. Your existing agent tools handle screenshots, decisions, and input; yomado supplies the display. No hardware dummy plug or paid display utility is required.
 
 ![yomado usage concept: two dark physical monitors, an awake Mac, and a virtual desktop on the right with 3D and garment-design windows.](docs/images/yomado-usage.png)
 

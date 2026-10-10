@@ -1,10 +1,14 @@
 # yomado · 夜窗
 
-给 macOS 上的图形 Agent 一块虚拟屏。
+为 Codex 等 Agent 的视觉电脑操作提供 macOS 虚拟屏。
 
 [English](README.md) · [MIT 许可证](LICENSE)
 
-Yomado 为 Blender、Marvelous Designer 等应用创建额外的 macOS 显示器。把 Agent 需要的窗口移过去，再用现有的截图和电脑操作工具工作，无需购买其他显示器工具。
+## 为什么需要 yomado
+
+yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**：看截图、理解界面，再用鼠标和键盘直接操作桌面软件，不必依赖应用专用的 MCP 接口。Marvelous Designer、Blender 等软件就有这样的使用场景，尤其是缺少合适 MCP 接口，或需要直接操作三维视图、菜单、对话框的工作流程。
+
+这类操作仍然需要图形桌面，以及供应用绘制界面、供 Agent 截图观察的显示表面。yomado 用纯软件为 Agent 所需窗口提供虚拟屏，目标是在 Mac 持续运行、实体显示器关闭之后，仍然保留可供 Agent 观察和操作的界面。截图、判断和键鼠输入由现有 Agent 工具完成，yomado 负责提供显示桌面，无需硬件显示器欺骗器或付费显示器软件。
 
 ![yomado 使用示意：两台熄屏的实体显示器、保持运行的 Mac，以及右侧显示三维和服装设计窗口的虚拟桌面。](docs/images/yomado-usage.png)
 
