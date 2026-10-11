@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ym_root="$(cd "$(dirname "$0")" && pwd -P)"
-ym_dist="$ym_root/dist"
+ym_dist="${YOMADO_OUTPUT_DIR:-$ym_root/dist}"
 ym_output="$ym_dist/Yomado.app"
 ym_icon="$ym_root/app/Resources/Yomado.icns"
 
@@ -36,8 +36,9 @@ ym_flags=(
 )
 
 "$ym_clang" "${ym_flags[@]}" -I "$ym_root/bridge" \
-  "$ym_root/app/Yomado.m" "$ym_root/app/ControlUI.m" "$ym_root/app/WindowRecovery.m" "$ym_root/bridge/VDVirtualDisplay.m" \
-  -framework AppKit -framework CoreGraphics -framework IOKit -framework Carbon -framework ApplicationServices \
+  "$ym_root/app/Yomado.m" "$ym_root/app/ControlUI.m" "$ym_root/app/WindowRecovery.m" \
+  "$ym_root/app/AppWorkspace.m" "$ym_root/app/AppWorkspaceView.m" "$ym_root/bridge/VDVirtualDisplay.m" \
+  -framework AppKit -framework CoreGraphics -framework IOKit -framework Carbon -framework ApplicationServices -framework QuartzCore \
   -o "$ym_bundle/Contents/MacOS/Yomado"
 
 "$ym_clang" "${ym_flags[@]}" "$ym_root/app/Watchdog.m" \

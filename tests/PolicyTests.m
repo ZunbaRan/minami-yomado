@@ -65,6 +65,13 @@ static void LayoutFixtures(void) {
         [NSJSONSerialization dataWithJSONObject:mixed options:0 error:nil] options:NSJSONReadingMutableContainers error:nil];
     (void)YMPhysicalRightEdge(mixed);
     Check([mixed isEqual:before], @"layout policy leaves its source snapshot unchanged");
+
+    Check([YMDesktopRightEdge(mixed) isEqual:@9920], @"new workspaces append after existing virtual displays too");
+    Check(YMDesktopRightEdge(@[inactiveDisplay, offlineDisplay]) == nil, @"append ignores inactive and offline outputs");
+    Check([YMDesktopRightEdge(@[Physical(-3840, 0, 1920)]) isEqual:@(-1920)], @"append preserves a negative desktop edge");
+    Check([YMDesktopRightEdge(@[Physical(0, 0, NAN), Physical(0, 0, 1920)]) isEqual:@1920], @"append rejects invalid geometry");
+    Check(YMDesktopRightEdge(@[Physical(DBL_MAX, 0, DBL_MAX)]) == nil, @"append rejects coordinate overflow");
+    Check([mixed isEqual:before], @"multi-display append does not mutate the original arrangement");
 }
 
 static void PrivacyFixtures(void) {

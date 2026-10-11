@@ -24,3 +24,9 @@ ym_sdk="$(DEVELOPER_DIR="$ym_developer" /usr/bin/xcrun --sdk macosx --show-sdk-p
   -I "$ym_root/app" "$ym_root/tests/WindowRecoveryTests.m" -framework Foundation \
   -o "$ym_stage/WindowRecoveryTests"
 "$ym_stage/WindowRecoveryTests"
+
+"$ym_clang" -fobjc-arc -Wall -Wextra -Werror -isysroot "$ym_sdk" -mmacosx-version-min=14.0 \
+  -ffile-prefix-map="$ym_root"=. -fmacro-prefix-map="$ym_root"=. \
+  -I "$ym_root/app" "$ym_root/tests/AppWorkspaceTests.m" -framework Foundation \
+  -framework CoreGraphics -o "$ym_stage/AppWorkspaceTests"
+"$ym_stage/AppWorkspaceTests"

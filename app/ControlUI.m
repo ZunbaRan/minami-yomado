@@ -70,6 +70,7 @@ static void YMDrawCenteredText(NSString *text, NSRect rect, CGFloat size, NSFont
     self.needsDisplay = YES;
 }
 - (void)setOwnedDisplayID:(uint32_t)ownedDisplayID { _ownedDisplayID = ownedDisplayID; self.needsDisplay = YES; }
+- (void)setOwnedDisplayIDs:(NSSet<NSNumber *> *)ownedDisplayIDs { _ownedDisplayIDs = [ownedDisplayIDs copy]; self.needsDisplay = YES; }
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
     NSRect area = NSInsetRect(self.bounds, 12, 12);
@@ -94,7 +95,8 @@ static void YMDrawCenteredText(NSString *text, NSRect rect, CGFloat size, NSFont
     CGFloat originX = area.origin.x + (area.size.width - topology.size.width * scale) / 2;
     CGFloat originY = area.origin.y + (area.size.height - 34 - topology.size.height * scale) / 2;
     for (NSDictionary *item in visible) {
-        BOOL owned = [item[@"displayID"] unsignedIntValue] == self.ownedDisplayID && self.ownedDisplayID != 0;
+        BOOL owned = [self.ownedDisplayIDs containsObject:item[@"displayID"]] ||
+            ([item[@"displayID"] unsignedIntValue] == self.ownedDisplayID && self.ownedDisplayID != 0);
         BOOL virtualDisplay = [item[@"isVirtual"] boolValue];
         BOOL main = [item[@"isMain"] boolValue];
         NSColor *accent = owned ? NSColor.controlAccentColor : NSColor.secondaryLabelColor;
@@ -113,7 +115,7 @@ static void YMDrawCenteredText(NSString *text, NSRect rect, CGFloat size, NSFont
             NSRect bar = NSMakeRect(rect.origin.x + 10, rect.origin.y + 8, MAX(8, rect.size.width - 20), 3);
             [accent setFill]; [[NSBezierPath bezierPathWithRoundedRect:bar xRadius:1.5 yRadius:1.5] fill];
         }
-        NSString *title = owned ? @"yomado" : (item[@"name"] ?: @"显示器");
+        NSString *title = item[@"name"] ?: @"显示器";
         CGFloat centerY = NSMidY(rect) - 17;
         YMDrawCenteredText(title, NSMakeRect(rect.origin.x + 6, centerY, MAX(1, rect.size.width - 12), 21),
                            12, NSFontWeightSemibold, owned ? NSColor.controlAccentColor : NSColor.labelColor);

@@ -12,4 +12,5 @@
 @interface YMTopologyView : NSView
 @property(nonatomic, copy) NSArray<NSDictionary *> *snapshot;
 @property(nonatomic) uint32_t ownedDisplayID;
+@property(nonatomic, copy) NSSet<NSNumber *> *ownedDisplayIDs;
 @end

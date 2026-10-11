@@ -1,6 +1,6 @@
-# yomado
+# yomado · 夜窗
 
-A virtual display for visual computer use by Codex and other agents on macOS.
+A work screen for visual agents, designed to let physical screens rest.
 
 [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
@@ -18,10 +18,12 @@ These workflows still need a graphical desktop and a display surface for applica
 
 ## What it does
 
-- Creates a 1920 × 1080 or 2560 × 1440 virtual display, with optional HiDPI.
-- Requests that the system and graphical desktop remain awake while the virtual display exists.
-- Offers an optional, reversible trial that disables one selected physical display output.
-- Includes a 15-second trial rollback, a recovery shortcut, and an independent recovery helper.
+- Creates multiple named virtual displays, such as “Virtual display 1 · Codex” and “Virtual display 2 · GrokBot”, each with 1920 × 1080 or 2560 × 1440 and optional HiDPI.
+- Groups the menu-bar menu by display, with hover submenus listing apps and visible-window counts, and an individual close action.
+- Shows each physical and yomado display in desktop order, scaled to their logical desktop dimensions, with application icons inside each screen. Drag an icon into a virtual display, between virtual displays, or back to a physical display. Windows moved manually are detected too.
+- Accepts a running app’s `.app` bundle from Finder as an explicit move of that app’s ordinary windows.
+- Keeps naming and display settings in each virtual screen’s **…** menu; the **+** menu creates a screen or starts a saved one.
+- Requests that the system and graphical desktop remain awake while virtual displays exist.
 
 The virtual display belongs to your **existing login session**. It is not a separate operating system, user session, or isolated keyboard and mouse. Your agent and your own work share focus and input, so coordinate their use of the desktop. Yomado is not a remote desktop server or an agent: your existing tools still provide viewing, screenshots, and input.
 
@@ -30,6 +32,10 @@ The virtual display belongs to your **existing login session**. It is not a sepa
 ![yomado control panel](docs/images/yomado-control.png)
 
 *Native control-panel preview with example display data. This image does not validate target-app input or monitor standby.*
+
+The compact panel presents **yomado · 夜窗**, a short tagline, and the screen layout with app icons inside each screen. App names and window counts are available on hover; controls appear as icons and menus. Valid drag targets highlight and their icons gently wiggle; Reduce Motion uses a static highlight. Use a virtual screen’s **…** menu to rename or close it. The menu also shows resolution and HiDPI; close that screen before changing those settings. Saved, closed screens are available from **+**, where you can adjust their settings and start them again.
+
+A local live test used the application chooser to move Calculator from a physical screen into Codex, then into GrokBot. A fresh screenshot on GrokBot showed the Calculator window, and typing `2 + 3` followed by Return produced `5`. Returning Calculator restored its original window position and size. These checks verify the chooser-based moves, virtual-to-virtual transfer, screenshot, keyboard input and explicit return for that app. A separate test with one virtual display also confirmed that closing it restored Calculator’s original position and size, then removed the virtual display. Direct icon dragging, closing one virtual display while another remains active, and the monitor-off workflow remain unverified.
 
 ## Build
 
@@ -54,46 +60,43 @@ Builds receive an **ad hoc signature**, not an Apple Developer ID signature or n
 
 ## Use the virtual display
 
-1. Open your locally built `Yomado.app` and choose a resolution. HiDPI doubles each pixel dimension: a 1920 × 1080 logical desktop becomes 3840 × 2160 pixels.
-2. Create the virtual display. Physical outputs remain enabled, with their existing main display and positions retained. The new virtual display starts to the right of the physical displays.
-3. Keep a physical monitor as your main display. In macOS Displays settings, choose where the virtual display belongs in your arrangement.
-4. Move **only the agent's work windows** and necessary dialogs onto the virtual display. Leave your other windows on your physical monitors. Yomado does not automatically migrate third-party application windows.
-5. Select the virtual display in your existing viewing or agent tools, if they support that selection. Verify a fresh target-app screenshot and an actual reversible input action before starting work.
+1. Open your locally built `Yomado.app`. The panel shows the current physical screens and their visible apps.
+2. Choose **+** and start a saved screen, such as Codex, or create a new one. Use the screen’s **…** menu to rename it for an agent. New virtual screens are appended to the right of the existing layout while physical outputs stay enabled.
+3. Drag **only the agent’s application icons** into the desired virtual screen. An icon represents that app’s ordinary windows on the source screen; moving it does not collect the same app’s windows from other screens. You can also move actual windows manually. Dropping a running `.app` from Finder explicitly selects that app’s ordinary windows across screens. Open the app before adding it.
+4. Drag an app’s icon back into a physical screen to return its windows there, or use the icon’s return action. Dragging between physical screens is not provided; move the actual window for that operation. App counts reflect detected visible windows, not measured GPU activity or agent progress. Some apps reject Accessibility window positioning; yomado reports the failure.
+5. Select the virtual screen in your viewing or agent tools, if supported. Verify a fresh target-app screenshot and an actual reversible input action before starting work.
+
+Keep a physical display as the main display. Adjust the actual display arrangement in macOS Displays settings when needed. Resolution and HiDPI settings apply when starting a closed screen: HiDPI doubles each pixel dimension, so a 1920 × 1080 logical desktop becomes 3840 × 2160 pixels.
 
 Changing displays, window positions, or scaling can invalidate an agent's saved coordinates. Refresh its screenshot and window state after each change. A successful screenshot does not by itself prove that keyboard or mouse input works.
 
-Keep Yomado running while using its virtual display. Closing the control panel leaves the menu-bar app running. Stopping the virtual display or quitting removes it after attempting physical-output recovery. Removing a display can make macOS reposition windows; if you manually made the virtual display the main display, Yomado must first switch back to an available physical display. There is no automatic login startup or reboot recovery.
+Keep yomado running while using its displays. Closing the panel leaves the menu-bar app running. Each display has its own app submenu and close action; **Quit yomado** closes all displays. Closing first attempts to return that display’s windows to physical screens and keeps the display if recovery cannot be confirmed. Sibling virtual displays continue running.
+
+For ordinary apps moved through yomado, original placement is held in memory for this run and survives transfers between virtual displays. Dropping back on the original physical display restores that placement. Dropping on a different physical display centers the windows there; manually moved windows without a checkpoint are also centered on the chosen physical display. The icon’s general return action uses the recorded original display, or the current physical main display when no checkpoint exists. Friendly names and resolution preferences are saved locally. Displays are not automatically recreated at login or after a restart. Multiple displays still share keyboard, pointer and focus; they do not give agents independent input sessions.
 
 Yomado does not change passwords, lock-screen policy, screen savers, or login settings. Its wake requests do not unlock a Mac. Screenshot and input permissions remain the responsibility of the tools that perform those actions.
 
 ## WeChat window recovery (experimental)
 
-The control panel can remember WeChat's physical-screen position before moving its main window to yomado. Choose **Remember position and move to virtual display**, then use **Return to original display** whenever you need to handle WeChat yourself. The menu-bar app also exposes the return action. Other applications are not moved.
+WeChat appears as an app icon inside its screen, alongside other applications. Moving it through yomado additionally checkpoints its main window’s physical-screen position and size. Use the icon’s return action or drag it back to a physical screen when login or a security prompt needs your attention. A pending WeChat safety checkpoint returns the window to its recorded original display, even when it is dropped on a different physical screen. Return WeChat to the physical desktop before moving it to another virtual screen.
 
-If Accessibility permission is missing, the panel shows a guide and disables window movement. Choose **Open Control Permission Settings** (「打开控制权限设置…」) to open the relevant page under **Privacy & Security**, then enable yomado yourself. This page is called **Accessibility** on earlier macOS versions, and **Device Control & Data Access** on macOS 27. The guide uses the system's page name. If yomado is absent from the list, use **+** to select the app. The panel detects the updated permission automatically. Permission is requested only on that button click; opening the page does not grant it.
+If Accessibility permission is missing, a **lock icon** appears in the header and window movement is disabled. Click that icon to open the relevant page under **Privacy & Security**, then enable yomado yourself. This page is called **Accessibility** on earlier macOS versions, and **Device Control & Data Access** on macOS 27. If yomado is absent from the list, use **+** to select the app. The panel detects the updated permission automatically and hides the lock icon when access is granted. Permission is requested only when you click the icon; opening the settings page does not grant it.
 
-Local builds are ad hoc signed. After rebuilding, macOS may retain a permission record tied to an older signature even though its switch appears enabled. If the panel still reports no permission after reopening the app, remove the old yomado entry in System Settings, add the current app with **+**, and enable it again. yomado does not reset or edit system permission records itself.
+Local builds are ad hoc signed. After rebuilding, macOS may retain a permission record tied to an older signature even though its switch appears enabled. If the lock icon remains after reopening the app, remove the old yomado entry in System Settings, add the current app with **+**, and enable it again. yomado does not reset or edit system permission records itself.
 
 While that move is pending, a limited check can recognize supported security/login dialogs and return WeChat to its physical screen without clicking the prompt. Ordinary chat-window contents are never scanned. Some WeChat versions do not expose those dialogs in a recognizable form; automatic return is not guaranteed, so keep the manual return action available. An automatic failure pauses further attempts. Stopping or quitting yomado is held if a pending WeChat return fails.
 
 The local checkpoint stores only the application ID, display UUID, window position/size and a recovery flag, under `~/Library/Application Support/dev.chekusu.yomado/`. It does not store chats, contacts, screenshots, passwords or authentication state. Returning a window cannot restore a logged-out account; complete login or verification yourself. If the original display is unavailable, recovery uses an available physical display and constrains the window to its bounds.
 
-This is window-placement recovery, not a claim that WeChat visual automation or logout recovery has passed end-to-end testing.
+An earlier single-display WeChat move-and-return test restored its original placement. The current computer-use tool returned white WeChat window captures on both physical and virtual displays, so visual-input testing stopped. This does not establish working WeChat visual automation; real logout-triggered automatic recovery remains unverified.
 
-## Optional physical-output trial
+## Physical monitors
 
-**This is an experimental action, not the default workflow.** It changes the main display and arrangement, which can cause macOS or applications to move other windows. Save your work first and test only while you can directly reach the Mac and monitor.
+The current control panel keeps physical display outputs enabled and does not expose the earlier physical-output trial. Creating or closing a virtual screen does not request that a physical monitor turn off.
 
-1. Verify that your existing tools can view and control the virtual display while the physical monitors are still on.
-2. Select one physical display in Yomado. Disable mirroring for that display before testing.
-3. Start the 15-second physical-output trial and accept its confirmation dialog. Yomado makes the virtual display the main display, moves its own control panel there, and requests that the selected physical output be disabled. Other physical outputs remain enabled.
-4. Check the actual monitor and perform a fresh target-app screenshot and reversible input action on the virtual display. Confirm within the countdown only if you can still operate it. Otherwise, Yomado attempts recovery after 15 seconds.
+For a later attended monitor-off test, first verify actual screenshots and reversible input in the target app while the physical monitors are on. The monitor can then be switched off using its own controls, while the Mac remains awake and the desktop session remains available. Check the physical monitor and test the target app again. This stage has not been validated; an available virtual display alone does not prove that the agent can keep working with the monitor off.
 
-Recover with **Control + Option + Command + R** (`⌃⌥⌘R`), the recovery button, or the menu-bar recovery command. Stopping or quitting also attempts recovery.
-
-The separate `YomadoWatchdog` helper monitors an armed trial's app heartbeat and virtual-display availability. If the app exits, its heartbeat expires, or the virtual display becomes unavailable, the helper attempts to re-enable the recorded physical output. It never disables an output itself.
-
-These recovery paths are **best effort**. An API request can fail or a monitor may not respond. Software-disabled output and a black screenshot do not establish that a monitor entered standby or used less power; Yomado cannot cut power or measure consumption. Recovery also cannot guarantee each application's previous window positions.
+A black screenshot or a software-disabled output does not establish monitor standby or reduced power consumption. yomado cannot cut a monitor’s power or measure its consumption. The legacy recovery helper and CLI display tests remain in the source for development; they are not a physical-monitor power control in this panel.
 
 ## Diagnostics and tests
 
@@ -113,7 +116,7 @@ Pure policy tests can run without creating a display or opening an application:
 bash ./test.sh
 ```
 
-These tests check display placement, diagnostic redaction, and WeChat checkpoint/recovery policies. They do not exercise private APIs or prove that a live display configuration succeeds.
+These tests check display placement, app/window ownership and recovery geometry, diagnostic redaction, and WeChat checkpoint policies. They do not exercise private APIs or prove live display configuration or cross-app input.
 
 Render the control panel with example data, without reading or changing the display arrangement, inspecting WeChat or activating a window:
 
@@ -121,7 +124,7 @@ Render the control panel with example data, without reading or changing the disp
 ./dist/Yomado.app/Contents/MacOS/Yomado --preview-ui ./test-output/control.png running light
 ```
 
-Create the output directory first. Preview states are `empty`, `running` and `trial`; appearances are `light` and `dark`. The renderer needs macOS AppKit/WindowServer and draws its own hidden views. A preview is not a live display or target-app test.
+Create the output directory first. Preview states are `empty`, `running`, `multi` and the legacy `trial` fixture; appearances are `light` and `dark`. The legacy fixture does not expose an output-trial action in the current panel. The renderer needs macOS AppKit/WindowServer and draws its own hidden views. A preview is not a live display or target-app test.
 
 The following tests require an interactive macOS login session. **Do not run them automatically, in build-only CI, or while someone else is using the desktop.** They create and remove temporary displays and apply layout restoration, so windows may move. Save work and close other Yomado instances before running them.
 
@@ -138,7 +141,7 @@ Generated view images are **not** screenshots of Blender, Marvelous Designer, or
 
 ## Implementation
 
-`app/Yomado.m` contains the AppKit app and test entry points. `app/ControlUI.*` draws the control-panel components; `app/WindowRecovery.*` and its pure policy header handle the opt-in WeChat window checkpoint. `app/Watchdog.m` contains the recovery helper; `bridge/VDVirtualDisplay.*` wraps the virtual-display interface. The application namespace is `dev.chekusu.yomado`.
+`app/Yomado.m` contains the AppKit app and test entry points. `app/ControlUI.*` and `app/AppWorkspaceView.*` draw the native screen layout, application icons and drag targets; `app/AppWorkspace.*` manages ordinary app window ownership and original placement; `app/WindowRecovery.*` and its pure policy header handle the opt-in WeChat window checkpoint. `app/Watchdog.m` contains the recovery helper; `bridge/VDVirtualDisplay.*` wraps the virtual-display interface. The application namespace is `dev.chekusu.yomado`.
 
 The implementation uses private `CGVirtualDisplay` classes and dynamically discovers `CGSConfigureDisplayEnabled` / `SLSConfigureDisplayEnabled`. Feature availability is checked at runtime. Apple does not promise compatibility for these interfaces.
 

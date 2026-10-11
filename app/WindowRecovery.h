@@ -36,6 +36,11 @@ FOUNDATION_EXPORT NSString * const YMWindowRecoveryErrorDomain;
 // Save a physical checkpoint successfully before moving the single main
 // WeChat window. A virtual position never overwrites the physical checkpoint.
 - (BOOL)moveWeChatToVirtual:(NSError * _Nullable * _Nullable)error;
+// A physical-screen tile drag must match the selected WeChat main window's
+// dominant physical display before any checkpoint is written or window moved.
+// Zero preserves the original whole-main-window behavior for an external drop.
+- (BOOL)moveWeChatToVirtualFromDisplayID:(CGDirectDisplayID)sourceDisplayID
+                                  error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)restoreWeChat:(NSError * _Nullable * _Nullable)error;
 // At most one AX check per five seconds while a tracked move is pending.
 // Examines only AXDialog/AXSystemDialog and directly attached sheets, never

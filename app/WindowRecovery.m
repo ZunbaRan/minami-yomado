@@ -78,7 +78,8 @@ static NSError *YMRecoveryError(NSInteger code, NSString *message) {
 @property(nonatomic) NSTimeInterval lastPoll;
 @property(nonatomic) NSTimeInterval lastMutation;
 @property(nonatomic) BOOL operationInProgress;
-- (BOOL)performMoveWeChatToVirtual:(NSError **)error;
+- (BOOL)captureWeChatPlacementFromDisplayID:(CGDirectDisplayID)sourceDisplayID error:(NSError **)error;
+- (BOOL)performMoveWeChatToVirtualFromDisplayID:(CGDirectDisplayID)sourceDisplayID error:(NSError **)error;
 - (BOOL)performRestoreWeChat:(NSError **)error;
 @end
 
@@ -223,6 +224,10 @@ static NSError *YMRecoveryError(NSInteger code, NSString *message) {
 }
 
 - (BOOL)captureWeChatPlacement:(NSError **)error {
+    return [self captureWeChatPlacementFromDisplayID:kCGNullDirectDisplay error:error];
+}
+
+- (BOOL)captureWeChatPlacementFromDisplayID:(CGDirectDisplayID)sourceDisplayID error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Window recovery is main-thread only.");
     if (self.needsRestoreBeforeRemovingVirtualDisplay)
         return [self fail:error code:16 message:@"请先完成微信窗口恢复，再记忆或移入新的窗口；原位置记录保持不变。" pause:NO];
@@ -233,6 +238,11 @@ static NSError *YMRecoveryError(NSInteger code, NSString *message) {
     id window = [self ordinaryWindowForApplication:application];
     if (!window) return [self fail:error code:5 message:@"找不到可记忆的微信主窗口；请先在实体屏打开微信主界面。" pause:YES];
     NSDictionary *frame = YMWindowFrame(window);
+    if (sourceDisplayID) {
+        NSDictionary *source = YMRecoveryDominantDisplay(frame, self.displays);
+        if (!source || [source[@"isVirtual"] boolValue] || [source[@"displayID"] unsignedIntValue] != sourceDisplayID)
+            return [self fail:error code:19 message:@"微信主窗口不在所拖出的实体屏中；尚未移动窗口，也未改写原位置记录。请从主窗口所在屏幕拖动。" pause:NO];
+    }
     NSDictionary *record = YMRecoveryCheckpointForFrame(YMRecoveryWeChatBundleID, frame, self.displays, NO);
     if (!record) return [self fail:error code:6 message:@"请先把微信主窗口放在实体屏；虚拟屏位置不会覆盖恢复记录。" pause:NO];
     if (![self persistCheckpoint:record error:error]) return NO;
@@ -301,14 +311,18 @@ static NSError *YMRecoveryError(NSInteger code, NSString *message) {
 }
 
 - (BOOL)moveWeChatToVirtual:(NSError **)error {
+    return [self moveWeChatToVirtualFromDisplayID:kCGNullDirectDisplay error:error];
+}
+
+- (BOOL)moveWeChatToVirtualFromDisplayID:(CGDirectDisplayID)sourceDisplayID error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Window recovery is main-thread only.");
     if (self.operationInProgress) return [self fail:error code:18 message:@"正在观察微信窗口，请稍候。" pause:NO];
     self.operationInProgress = YES;
-    @try { return [self performMoveWeChatToVirtual:error]; }
+    @try { return [self performMoveWeChatToVirtualFromDisplayID:sourceDisplayID error:error]; }
     @finally { self.operationInProgress = NO; }
 }
 
-- (BOOL)performMoveWeChatToVirtual:(NSError **)error {
+- (BOOL)performMoveWeChatToVirtualFromDisplayID:(CGDirectDisplayID)sourceDisplayID error:(NSError **)error {
     if (self.needsRestoreBeforeRemovingVirtualDisplay)
         return [self fail:error code:16 message:@"请先恢复已移入的微信窗口，再开始新的移屏；原位置记录保持不变。" pause:NO];
     if (![self requirePermission:error] || ![self mutationAllowed:error]) return NO;
@@ -321,7 +335,7 @@ static NSError *YMRecoveryError(NSInteger code, NSString *message) {
         return [self fail:error code:11 message:@"请先创建 yomado 的虚拟屏，再移动微信。" pause:NO];
     // Capture before any AX mutation. Never move if the checkpoint cannot be
     // saved safely; this also refuses a second move from a virtual position.
-    if (![self captureWeChatPlacement:error]) return NO;
+    if (![self captureWeChatPlacementFromDisplayID:sourceDisplayID error:error]) return NO;
     NSMutableDictionary *pending = [self.checkpoint mutableCopy];
     pending[@"recoveryPending"] = @YES;
     if (![self persistCheckpoint:pending error:error]) return NO;
