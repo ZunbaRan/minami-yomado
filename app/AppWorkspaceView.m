@@ -310,11 +310,12 @@ static NSTextField *YMWorkspaceLabel(NSString *text, CGFloat size, NSFontWeight 
         [_screenView addSubview:_emptyDropGlyph];
         [NSLayoutConstraint activateConstraints:@[[_emptyDropGlyph.widthAnchor constraintEqualToConstant:24],[_emptyDropGlyph.heightAnchor constraintEqualToConstant:24],[_emptyDropGlyph.centerXAnchor constraintEqualToAnchor:_desktopScroll.centerXAnchor],[_emptyDropGlyph.centerYAnchor constraintEqualToAnchor:_desktopScroll.centerYAnchor]]];
         _statusLabel=YMWorkspaceLabel(@"",10,NSFontWeightRegular,NSColor.secondaryLabelColor); _noteLabel=YMWorkspaceLabel(@"",10,NSFontWeightRegular,NSColor.secondaryLabelColor);
-        NSStackView *content=[NSStackView stackViewWithViews:@[_screenView,_statusLabel,_noteLabel]];
-        content.translatesAutoresizingMaskIntoConstraints=NO; content.orientation=NSUserInterfaceLayoutOrientationVertical; content.alignment=NSLayoutAttributeLeading; content.spacing=14;
-        [self addSubview:content];
+        // A tile is exactly one display. An intermediate stack with detached
+        // status labels leaves its height underconstrained when the outer
+        // horizontal stack is taller than its displays.
+        [self addSubview:_screenView];
         self.screenAspectConstraint=[_screenView.heightAnchor constraintEqualToAnchor:_screenView.widthAnchor multiplier:1.0/_displayAspectRatio];
-        [NSLayoutConstraint activateConstraints:@[[content.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],[content.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],[content.topAnchor constraintEqualToAnchor:self.topAnchor],[content.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],[_screenView.widthAnchor constraintEqualToAnchor:content.widthAnchor],self.screenAspectConstraint,[_statusLabel.widthAnchor constraintEqualToAnchor:content.widthAnchor],[_noteLabel.widthAnchor constraintEqualToAnchor:content.widthAnchor]]];
+        [NSLayoutConstraint activateConstraints:@[[_screenView.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],[_screenView.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],[_screenView.topAnchor constraintEqualToAnchor:self.topAnchor],[_screenView.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],self.screenAspectConstraint]];
         [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(accessibilityOptionsChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(workspaceInteractionEnded:) name:YMWorkspaceInteractionEndedNotification object:nil];
         [self updatePresentation]; [self rebuildIcons];

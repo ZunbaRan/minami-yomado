@@ -2,7 +2,7 @@
 
 A work screen for visual agents, designed to let physical screens rest.
 
-[简体中文](README.zh-CN.md) · [MIT license](LICENSE)
+[Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.1/Yomado-v0.3.1.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.1) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
 ## Why yomado exists
 
@@ -54,13 +54,13 @@ dist/Yomado.zip
 
 The build script selects the active Xcode or Command Line Tools installation through `xcrun`. Set `YOMADO_DEVELOPER_DIR` to select another developer directory.
 
-The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. This repository publishes source; it does not claim an available prebuilt release.
+The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.1), with a SHA-256 checksum. Intel binaries are not supplied.
 
 Builds receive an **ad hoc signature**, not an Apple Developer ID signature or notarization. Follow your Mac's normal security policies when choosing whether to run a local build.
 
 ## Use the virtual display
 
-1. Open your locally built `Yomado.app`. The panel shows the current physical screens and their visible apps.
+1. Extract the downloaded archive or build from source, then open `Yomado.app`. The panel shows the current physical screens and their visible apps.
 2. Choose **+** and start a saved screen, such as Codex, or create a new one. Use the screen’s **…** menu to rename it for an agent. New virtual screens are appended to the right of the existing layout while physical outputs stay enabled.
 3. Drag **only the agent’s application icons** into the desired virtual screen. An icon represents that app’s ordinary windows on the source screen; moving it does not collect the same app’s windows from other screens. You can also move actual windows manually. Dropping a running `.app` from Finder explicitly selects that app’s ordinary windows across screens. Open the app before adding it.
 4. Drag an app’s icon back into a physical screen to return its windows there, or use the icon’s return action. Dragging between physical screens is not provided; move the actual window for that operation. App counts reflect detected visible windows, not measured GPU activity or agent progress. Some apps reject Accessibility window positioning; yomado reports the failure.
@@ -117,6 +117,12 @@ bash ./test.sh
 ```
 
 These tests check display placement, app/window ownership and recovery geometry, diagnostic redaction, and WeChat checkpoint policies. They do not exercise private APIs or prove live display configuration or cross-app input.
+
+A separate hidden AppKit layout regression checks screen proportions, top alignment, inventory changes, scrolling and resizing. It requires a macOS WindowServer session, but does not inspect or move real application windows or create displays:
+
+```sh
+bash ./scripts/test-layout.sh
+```
 
 Render the control panel with example data, without reading or changing the display arrangement, inspecting WeChat or activating a window:
 

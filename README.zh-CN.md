@@ -37,6 +37,12 @@ yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**�
 
 一次本地实测通过应用选择菜单，把计算器从实体屏移入 Codex，再转移到 GrokBot 虚拟屏。在 GrokBot 上重新截图可以看到计算器窗口，键盘输入 `2 + 3` 并回车后显示 `5`；执行返回操作后，窗口位置和大小恢复到原来的状态。这验证了该应用的菜单移屏、跨虚拟屏转移、截图、键盘输入与主动返回。另一项单虚拟屏测试确认：关闭该屏后，计算器先恢复原位置和大小，随后虚拟屏被移除。直接拖动图标、关闭一块虚拟屏同时保留另一块，以及实体屏关闭后的工作仍未完成验证。
 
+## 下载
+
+[下载 Apple Silicon 应用](https://github.com/chekusu/yomado/releases/download/v0.3.1/Yomado-v0.3.1.zip) · [版本说明](https://github.com/chekusu/yomado/releases/tag/v0.3.1)
+
+这是使用 ad hoc 签名的实验版本，尚未进行 Apple Developer ID 签名与公证。
+
 ## 编译
 
 需要 macOS，以及 Xcode 或 Command Line Tools。只依赖系统框架，没有第三方运行依赖。
@@ -54,7 +60,7 @@ dist/Yomado.zip
 
 构建脚本通过 `xcrun` 使用当前 Xcode 或 Command Line Tools，也可以设置 `YOMADO_DEVELOPER_DIR` 选择其他开发工具目录。
 
-目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。本仓库发布源码，不表示已有预编译发行版。
+目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。[GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.1) 提供实验性的 Apple Silicon 应用和 SHA-256 校验值，暂不提供 Intel 版本。
 
 构建产物仅做 **ad hoc 签名**，没有 Apple Developer ID 签名或公证。是否运行本地构建，请遵循自己 Mac 的正常安全策略。
 
@@ -117,6 +123,12 @@ bash ./test.sh
 ```
 
 它们检查显示放置、窗口归属与恢复几何、微信检查点及诊断脱敏策略，不调用私有 API，也不能证明真实显示配置或跨应用输入能够成功。
+
+独立的隐藏 AppKit 布局回归检查屏幕比例、顶部对齐、应用列表变化、滚动和窗口缩放。它需要 macOS WindowServer 会话，不读取或移动真实应用窗口，也不创建显示器：
+
+```sh
+bash ./scripts/test-layout.sh
+```
 
 以下命令使用示例数据生成界面预览，不读取或更改显示排列、不读取微信，也不激活应用窗口：
 
