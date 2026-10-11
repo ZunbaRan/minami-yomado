@@ -2,7 +2,7 @@
 
 A work screen for visual agents, designed to let physical screens rest.
 
-[Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.1/Yomado-v0.3.1.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.1) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
+[Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.2/Yomado-v0.3.2.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.2) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
 ## Why yomado exists
 
@@ -54,7 +54,7 @@ dist/Yomado.zip
 
 The build script selects the active Xcode or Command Line Tools installation through `xcrun`. Set `YOMADO_DEVELOPER_DIR` to select another developer directory.
 
-The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.1), with a SHA-256 checksum. Intel binaries are not supplied.
+The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.2), with a SHA-256 checksum. Intel binaries are not supplied.
 
 Builds receive an **ad hoc signature**, not an Apple Developer ID signature or notarization. Follow your Mac's normal security policies when choosing whether to run a local build.
 
@@ -75,6 +75,12 @@ Keep yomado running while using its displays. Closing the panel leaves the menu-
 For ordinary apps moved through yomado, original placement is held in memory for this run and survives transfers between virtual displays. Dropping back on the original physical display restores that placement. Dropping on a different physical display centers the windows there; manually moved windows without a checkpoint are also centered on the chosen physical display. The icon’s general return action uses the recorded original display, or the current physical main display when no checkpoint exists. Friendly names and resolution preferences are saved locally. Displays are not automatically recreated at login or after a restart. Multiple displays still share keyboard, pointer and focus; they do not give agents independent input sessions.
 
 Yomado does not change passwords, lock-screen policy, screen savers, or login settings. Its wake requests do not unlock a Mac. Screenshot and input permissions remain the responsibility of the tools that perform those actions.
+
+## Version and updates
+
+The panel footer links to [yomado.app](https://yomado.app/), this GitHub repository and the MIT license, alongside the installed version. Click the refresh icon next to the version, or **Check for Updates…** (`检查更新…`) in the menu-bar menu. The menu-bar icon uses the same night-window logo as the app.
+
+Checking is manual: yomado queries the official GitHub releases list, including experimental prereleases, and offers a link to the newer release. Network errors are shown explicitly with a retry action. No account, telemetry or device identifiers are sent. Checking does not download, install, quit the app or change displays. To install a downloaded version, first save work and return apps from virtual displays, then quit the old copy and open the new one. Virtual displays are not retained across an app restart.
 
 ## WeChat window recovery (experimental)
 
@@ -116,7 +122,7 @@ Pure policy tests can run without creating a display or opening an application:
 bash ./test.sh
 ```
 
-These tests check display placement, app/window ownership and recovery geometry, diagnostic redaction, and WeChat checkpoint policies. They do not exercise private APIs or prove live display configuration or cross-app input.
+These tests check display placement, app/window ownership and recovery geometry, diagnostic redaction, WeChat checkpoint policies, and update checks. Update tests use a simulated network transport to cover version comparison, experimental releases, pagination, duplicate requests and failures without contacting GitHub. They do not exercise private APIs or prove live display configuration or cross-app input.
 
 A separate hidden AppKit layout regression checks screen proportions, top alignment, inventory changes, scrolling and resizing. It requires a macOS WindowServer session, but does not inspect or move real application windows or create displays:
 

@@ -11,6 +11,15 @@
 #import "WindowRecovery.h"
 #import "AppWorkspace.h"
 #import "AppWorkspaceView.h"
+#import "UpdateChecker.h"
+
+static NSString *YMAppVersion(void) {
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"—";
+}
+static NSImage *YMBrandIcon(void) {
+    NSURL *url = [NSBundle.mainBundle URLForResource:@"Yomado" withExtension:@"icns"];
+    return url ? [[NSImage alloc] initWithContentsOfURL:url] : nil;
+}
 
 typedef CGError (*ADEnableFunction)(CGDisplayConfigRef, CGDirectDisplayID, bool);
 static ADEnableFunction EnableAPI(void) {
@@ -119,6 +128,9 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @interface ADController : NSObject <NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate>
 @property NSWindow *window;
 @property NSStatusItem *statusItem;
+@property YMUpdateChecker *updateChecker;
+@property NSButton *updateButton;
+@property NSAlert *updateAlert;
 @property NSTextField *statusLabel;
 @property NSTextField *inventoryLabel;
 @property NSTextField *detailLabel;
@@ -230,6 +242,10 @@ static NSView *YMSpacer(void) {
     NSMenu *main = [[NSMenu alloc] init];
     NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"yomado" action:nil keyEquivalent:@""];
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"yomado"];
+    NSMenuItem *updateItem = [[NSMenuItem alloc] initWithTitle:@"检查更新…" action:@selector(checkForUpdates:) keyEquivalent:@""];
+    updateItem.target = self;
+    [appMenu addItem:updateItem];
+    [appMenu addItem:NSMenuItem.separatorItem];
     NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出 yomado" action:@selector(quit:) keyEquivalent:@"q"];
     quitItem.target = self;
     [appMenu addItem:quitItem];
@@ -332,7 +348,13 @@ static NSView *YMSpacer(void) {
 - (void)buildMenu {
     if (self.previewMode) return;
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"display.2" accessibilityDescription:@"yomado 虚拟屏"];
+    NSImage *logo = YMBrandIcon();
+    logo.size = NSMakeSize(18, 18);
+    logo.template = NO;
+    self.statusItem.button.image = logo;
+    self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
+    self.statusItem.button.toolTip = @"yomado · 夜窗";
+    [self.statusItem.button setAccessibilityLabel:@"yomado · 夜窗"];
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"yomado"];
     menu.delegate = self;
     self.statusItem.menu = menu;
@@ -374,7 +396,81 @@ static NSView *YMSpacer(void) {
     if (self.armed || self.layoutChangedForTrial || self.recoveryRequested)
         [menu addItem:[self menuItem:@"恢复实体显示器" action:@selector(restore:) profile:nil]];
     [menu addItem:NSMenuItem.separatorItem];
+    [menu addItem:[[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"yomado %@", YMAppVersion()] action:nil keyEquivalent:@""]];
+    [menu addItem:[self menuItem:self.updateChecker.checking ? @"正在检查更新…" : @"检查更新…" action:@selector(checkForUpdates:) profile:nil]];
+    [menu addItem:NSMenuItem.separatorItem];
     [menu addItem:[self menuItem:@"完全退出 yomado" action:@selector(quit:) profile:nil]];
+}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(checkForUpdates:))
+        return !self.previewMode && !self.updateChecker.checking && !self.updateAlert && !self.window.attachedSheet;
+    return YES;
+}
+- (void)openWebsite:(id)sender {
+    (void)sender;
+    if (!self.previewMode) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://yomado.app/"]];
+}
+- (void)openSource:(id)sender {
+    (void)sender;
+    if (!self.previewMode) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/chekusu/yomado"]];
+}
+- (void)openLicense:(id)sender {
+    (void)sender;
+    if (!self.previewMode) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/chekusu/yomado/blob/main/LICENSE"]];
+}
+- (NSButton *)footerLink:(NSString *)title action:(SEL)action tooltip:(NSString *)tooltip {
+    NSButton *button = [NSButton buttonWithTitle:title target:self action:action];
+    button.bordered = NO;
+    button.font = [NSFont systemFontOfSize:11];
+    button.contentTintColor = NSColor.secondaryLabelColor;
+    button.toolTip = tooltip;
+    [button setAccessibilityLabel:tooltip];
+    [button setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    return button;
+}
+- (void)checkForUpdates:(id)sender {
+    (void)sender;
+    if (self.previewMode || self.updateChecker.checking || self.updateAlert || self.window.attachedSheet) return;
+    if (!self.updateChecker) self.updateChecker = [[YMUpdateChecker alloc] initWithCurrentVersion:YMAppVersion()];
+    self.updateButton.enabled = NO;
+    self.updateButton.toolTip = @"正在检查更新…";
+    [self.updateButton setAccessibilityLabel:@"正在检查更新"];
+    __weak ADController *weakSelf = self;
+    [self.updateChecker checkWithCompletion:^(YMUpdateResult *result, NSError *error) {
+        ADController *controller = weakSelf;
+        if (!controller) return;
+        controller.updateButton.toolTip = @"检查更新";
+        [controller.updateButton setAccessibilityLabel:@"检查更新"];
+        NSAlert *alert = [[NSAlert alloc] init];
+        controller.updateAlert = alert;
+        BOOL available = !error && result.status == YMUpdateStatusAvailable;
+        if (error) {
+            alert.alertStyle = NSAlertStyleWarning;
+            alert.messageText = @"暂时无法检查更新";
+            alert.informativeText = error.localizedDescription;
+            [alert addButtonWithTitle:@"重试"];
+            [alert addButtonWithTitle:@"取消"];
+        } else if (available) {
+            alert.messageText = [NSString stringWithFormat:@"发现新版本 yomado %@", result.latestVersion];
+            alert.informativeText = [NSString stringWithFormat:@"当前版本 %@%@。可前往 GitHub 查看版本说明并下载。请在退出旧版前保存工作、返回虚拟屏里的窗口。", result.currentVersion, result.prerelease ? @"，新版本为实验版" : @""];
+            [alert addButtonWithTitle:@"查看更新"];
+            [alert addButtonWithTitle:@"稍后"];
+        } else {
+            alert.messageText = @"已是最新版本";
+            alert.informativeText = [NSString stringWithFormat:@"yomado %@ · 已检查正式版与实验版更新。", result.currentVersion];
+            [alert addButtonWithTitle:@"好"];
+        }
+        [controller showWindow:nil];
+        [alert beginSheetModalForWindow:controller.window completionHandler:^(NSModalResponse response) {
+            ADController *owner = weakSelf;
+            if (!owner) return;
+            owner.updateAlert = nil;
+            owner.updateButton.enabled = YES;
+            if (response != NSAlertFirstButtonReturn) return;
+            if (error) [owner checkForUpdates:nil];
+            else if (available) [NSWorkspace.sharedWorkspace openURL:result.releaseURL];
+        }];
+    }];
 }
 - (void)showProfile:(NSMenuItem *)sender { [self selectProfile:sender.representedObject]; [self showWindow:nil]; }
 - (void)closeProfile:(NSMenuItem *)sender {
@@ -538,14 +634,14 @@ static NSView *YMSpacer(void) {
 }
 
 - (void)buildWindow {
-    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 380)
+    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 410)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.contentView = [[YMDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 1000, 380)];
+    self.window.contentView = [[YMDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 1000, 410)];
     self.window.title = @"yomado";
     self.window.titlebarAppearsTransparent = YES;
     self.window.titleVisibility = NSWindowTitleHidden;
-    self.window.contentMinSize = NSMakeSize(760, 340);
+    self.window.contentMinSize = NSMakeSize(760, 370);
     self.window.delegate = self.previewMode ? nil : self;
     self.window.releasedWhenClosed = NO;
     if (!self.previewMode) [self.window center];
@@ -558,8 +654,7 @@ static NSView *YMSpacer(void) {
         [stack.bottomAnchor constraintEqualToAnchor:self.window.contentView.bottomAnchor constant:-18]
     ]];
     NSStackView *header = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 10);
-    NSURL *iconURL = [NSBundle.mainBundle URLForResource:@"Yomado" withExtension:@"icns"];
-    NSImage *icon = iconURL ? [[NSImage alloc] initWithContentsOfURL:iconURL] : nil;
+    NSImage *icon = YMBrandIcon();
     if (icon) {
         NSImageView *view = [NSImageView imageViewWithImage:icon];
         [view.widthAnchor constraintEqualToConstant:40].active = YES;
@@ -612,6 +707,26 @@ static NSView *YMSpacer(void) {
     ]];
     [stack addArrangedSubview:board]; YMFillWidth(board, stack);
     [board setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationVertical];
+
+    NSStackView *footer = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 10);
+    [footer addArrangedSubview:[self footerLink:@"yomado.app" action:@selector(openWebsite:) tooltip:@"官方网站 · https://yomado.app"]];
+    NSTextField *version = [NSTextField labelWithString:[NSString stringWithFormat:@"v%@", YMAppVersion()]];
+    version.font = [NSFont systemFontOfSize:11];
+    version.textColor = NSColor.secondaryLabelColor;
+    version.toolTip = [NSString stringWithFormat:@"版本 %@（构建 %@）", YMAppVersion(), [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"—"];
+    [footer addArrangedSubview:version];
+    self.updateButton = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"arrow.clockwise" accessibilityDescription:@"检查更新"] target:self action:@selector(checkForUpdates:)];
+    self.updateButton.bordered = NO;
+    self.updateButton.contentTintColor = NSColor.secondaryLabelColor;
+    self.updateButton.toolTip = @"检查更新";
+    [self.updateButton setAccessibilityLabel:@"检查更新"];
+    [self.updateButton.widthAnchor constraintEqualToConstant:24].active = YES;
+    [self.updateButton.heightAnchor constraintEqualToConstant:24].active = YES;
+    [footer addArrangedSubview:self.updateButton];
+    [footer addArrangedSubview:YMSpacer()];
+    [footer addArrangedSubview:[self footerLink:@"GitHub" action:@selector(openSource:) tooltip:@"开源代码 · github.com/chekusu/yomado"]];
+    [footer addArrangedSubview:[self footerLink:@"MIT" action:@selector(openLicense:) tooltip:@"MIT 开源许可证"]];
+    [stack addArrangedSubview:footer]; YMFillWidth(footer, stack);
 
     // Status messages are retained for recovery diagnostics, not permanent UI.
     self.statusLabel = Label(@"", 12, NSFontWeightRegular);
@@ -1532,7 +1647,7 @@ static int PreviewUI(NSString *path, NSString *state, BOOL dark) {
     [controller updateInventory];
     NSView *content = controller.window.contentView;
     [content layoutSubtreeIfNeeded];
-    [controller.window setContentSize:NSMakeSize(1000, 380)];
+    [controller.window setContentSize:NSMakeSize(1000, 410)];
     [content layoutSubtreeIfNeeded];
     // Native controls may settle their internal layers on a later run-loop turn.
     // Only this hidden fixture window exists in the preview process.

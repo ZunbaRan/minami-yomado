@@ -30,3 +30,6 @@ ym_sdk="$(DEVELOPER_DIR="$ym_developer" /usr/bin/xcrun --sdk macosx --show-sdk-p
   -I "$ym_root/app" "$ym_root/tests/AppWorkspaceTests.m" -framework Foundation \
   -framework CoreGraphics -o "$ym_stage/AppWorkspaceTests"
 "$ym_stage/AppWorkspaceTests"
+
+# Foundation-only update policy and simulated transport tests.
+bash "$ym_root/scripts/test-updates.sh"

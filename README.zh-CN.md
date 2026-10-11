@@ -2,7 +2,7 @@
 
 为视觉 Agent 留一块工作屏，让实体屏可以休息。
 
-[English](README.md) · [MIT 许可证](LICENSE)
+[官方网站](https://yomado.app/) · [English](README.md) · [MIT 许可证](LICENSE)
 
 ## 为什么需要 yomado
 
@@ -39,7 +39,7 @@ yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**�
 
 ## 下载
 
-[下载 Apple Silicon 应用](https://github.com/chekusu/yomado/releases/download/v0.3.1/Yomado-v0.3.1.zip) · [版本说明](https://github.com/chekusu/yomado/releases/tag/v0.3.1)
+[下载 Apple Silicon 应用](https://github.com/chekusu/yomado/releases/download/v0.3.2/Yomado-v0.3.2.zip) · [版本说明](https://github.com/chekusu/yomado/releases/tag/v0.3.2)
 
 这是使用 ad hoc 签名的实验版本，尚未进行 Apple Developer ID 签名与公证。
 
@@ -60,7 +60,7 @@ dist/Yomado.zip
 
 构建脚本通过 `xcrun` 使用当前 Xcode 或 Command Line Tools，也可以设置 `YOMADO_DEVELOPER_DIR` 选择其他开发工具目录。
 
-目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。[GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.1) 提供实验性的 Apple Silicon 应用和 SHA-256 校验值，暂不提供 Intel 版本。
+目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。[GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.2) 提供实验性的 Apple Silicon 应用和 SHA-256 校验值，暂不提供 Intel 版本。
 
 构建产物仅做 **ad hoc 签名**，没有 Apple Developer ID 签名或公证。是否运行本地构建，请遵循自己 Mac 的正常安全策略。
 
@@ -81,6 +81,12 @@ dist/Yomado.zip
 通过 yomado 移入的普通 App 会保留本次运行中的原窗口位置；在虚拟屏之间转移时沿用最初的位置。拖回原实体屏会恢复原位；拖到另一块实体屏则在该屏居中。自行手动移入、没有原位置记录的窗口，也会在你选中的实体屏居中。图标的通用返回操作优先使用原位置；没有记录时返回当前实体主屏。普通 App 的窗口记录保存在内存中；名称与分辨率偏好会保存到本机。软件不会在登录或重启后自动创建虚拟屏。多个虚拟屏仍共用同一套键鼠和焦点，不意味着多个 Agent 可以同时独占输入。
 
 Yomado 不修改密码、锁屏策略、屏保或登录设置；保持唤醒的请求不能解锁 Mac。截图和输入权限由执行这些操作的工具自行管理。
+
+## 版本与检查更新
+
+面板底部显示当前版本，并提供 [yomado.app](https://yomado.app/)、GitHub 源码和 MIT 协议入口。点击版本旁的刷新图标，或菜单栏菜单中的「检查更新…」。菜单栏使用与应用一致的夜窗 logo。
+
+检查由你手动发起：yomado 读取官方 GitHub Releases，包含当前的实验预发布版本，发现新版后提供版本页面入口。网络失败会明确提示并支持重试，不会误报为已是最新。无需账号，不发送设备标识或遥测数据。检查不会自动下载、安装、退出或调整显示器。安装下载的新版本前，请先保存工作、把应用从虚拟屏返回，再退出旧版并打开新版；重启应用不会保留运行中的虚拟屏。
 
 ## 微信窗口恢复（实验功能）
 
@@ -122,7 +128,7 @@ Yomado 不修改密码、锁屏策略、屏保或登录设置；保持唤醒的�
 bash ./test.sh
 ```
 
-它们检查显示放置、窗口归属与恢复几何、微信检查点及诊断脱敏策略，不调用私有 API，也不能证明真实显示配置或跨应用输入能够成功。
+它们检查显示放置、窗口归属与恢复几何、微信检查点、诊断脱敏及更新策略。更新测试使用模拟网络覆盖版本比较、实验版、分页、重复请求和失败情况，不访问 GitHub。这些测试不调用私有显示 API，也不能证明真实显示配置或跨应用输入能够成功。
 
 独立的隐藏 AppKit 布局回归检查屏幕比例、顶部对齐、应用列表变化、滚动和窗口缩放。它需要 macOS WindowServer 会话，不读取或移动真实应用窗口，也不创建显示器：
 
