@@ -4,6 +4,12 @@ set -euo pipefail
 ym_root="$(cd "$(dirname "$0")" && pwd -P)"
 ym_dist="$ym_root/dist"
 ym_output="$ym_dist/Yomado.app"
+ym_icon="$ym_root/app/Resources/Yomado.icns"
+
+if [ ! -s "$ym_icon" ]; then
+  printf 'Missing required app icon: app/Resources/Yomado.icns\n' >&2
+  exit 1
+fi
 
 if [ "${YOMADO_DEVELOPER_DIR:-}" != "" ]; then
   ym_clang="$(DEVELOPER_DIR="$YOMADO_DEVELOPER_DIR" /usr/bin/xcrun --sdk macosx --find clang)"
@@ -30,8 +36,8 @@ ym_flags=(
 )
 
 "$ym_clang" "${ym_flags[@]}" -I "$ym_root/bridge" \
-  "$ym_root/app/Yomado.m" "$ym_root/bridge/VDVirtualDisplay.m" \
-  -framework AppKit -framework CoreGraphics -framework IOKit -framework Carbon \
+  "$ym_root/app/Yomado.m" "$ym_root/app/ControlUI.m" "$ym_root/app/WindowRecovery.m" "$ym_root/bridge/VDVirtualDisplay.m" \
+  -framework AppKit -framework CoreGraphics -framework IOKit -framework Carbon -framework ApplicationServices \
   -o "$ym_bundle/Contents/MacOS/Yomado"
 
 "$ym_clang" "${ym_flags[@]}" "$ym_root/app/Watchdog.m" \
@@ -39,6 +45,7 @@ ym_flags=(
   -o "$ym_bundle/Contents/MacOS/YomadoWatchdog"
 
 /bin/cp -X "$ym_root/Info.plist" "$ym_bundle/Contents/Info.plist"
+/bin/cp -X "$ym_icon" "$ym_bundle/Contents/Resources/Yomado.icns"
 /usr/bin/xattr -cr "$ym_bundle"
 /usr/bin/codesign --force --sign - "$ym_bundle/Contents/MacOS/YomadoWatchdog"
 /usr/bin/codesign --force --sign - "$ym_bundle"

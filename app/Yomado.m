@@ -7,6 +7,8 @@
 #import "VDVirtualDisplay.h"
 #import "LayoutPolicy.h"
 #import "DiagnosticPrivacy.h"
+#import "ControlUI.h"
+#import "WindowRecovery.h"
 
 typedef CGError (*ADEnableFunction)(CGDisplayConfigRef, CGDirectDisplayID, bool);
 static ADEnableFunction EnableAPI(void) {
@@ -105,6 +107,26 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @property NSTextField *statusLabel;
 @property NSTextField *inventoryLabel;
 @property NSTextField *detailLabel;
+@property YMTopologyView *topologyView;
+@property YMStatusPill *statusPill;
+@property NSTextField *sessionHeadline;
+@property NSTextField *sessionCaption;
+@property NSTextField *sessionResolution;
+@property NSTextField *wakeLabel;
+@property NSTextField *placementLabel;
+@property NSButton *experimentToggle;
+@property NSView *experimentContent;
+@property NSTextField *wechatStatusLabel;
+@property NSTextField *wechatPermissionGuide;
+@property(copy) NSString *wechatPermissionMessage;
+@property NSButton *wechatMoveButton;
+@property NSButton *wechatRestoreButton;
+@property NSButton *wechatPermissionButton;
+@property YMWindowRecovery *windowRecovery;
+@property BOOL experimentsExpanded;
+@property BOOL previewMode;
+@property(copy) NSString *previewState;
+@property(copy) NSArray<NSDictionary *> *previewSnapshot;
 @property NSPopUpButton *resolution;
 @property NSPopUpButton *physicalChoice;
 @property NSButton *hiDPIBox;
@@ -131,6 +153,8 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @property EventHotKeyRef hotkey;
 @property EventHandlerRef keyHandler;
 - (void)restore:(id)sender;
+- (void)buildWindow;
+- (void)updateInventory;
 @end
 
 static OSStatus RecoveryHotkey(EventHandlerCallRef next, EventRef event, void *data) {
@@ -150,11 +174,67 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     button.bezelStyle = NSBezelStyleRounded;
     return button;
 }
+static NSStackView *YMStack(NSUserInterfaceLayoutOrientation orientation, CGFloat spacing) {
+    NSStackView *stack = [[NSStackView alloc] init];
+    stack.orientation = orientation;
+    stack.alignment = orientation == NSUserInterfaceLayoutOrientationVertical ? NSLayoutAttributeLeading : NSLayoutAttributeCenterY;
+    stack.spacing = spacing;
+    stack.distribution = NSStackViewDistributionFill;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    stack.detachesHiddenViews = YES;
+    return stack;
+}
+static void YMFillWidth(NSView *child, NSView *parent) {
+    [child.widthAnchor constraintEqualToAnchor:parent.widthAnchor].active = YES;
+}
+static NSView *YMSpacer(void) {
+    NSView *spacer = [[NSView alloc] init];
+    [spacer setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+    return spacer;
+}
+static NSView *YMCard(NSStackView **content) {
+    YMPanelView *card = [[YMPanelView alloc] init];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    NSStackView *stack = YMStack(NSUserInterfaceLayoutOrientationVertical, 12);
+    [card addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
+        [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
+        [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:18],
+        [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18]
+    ]];
+    *content = stack;
+    return card;
+}
+static NSStackView *YMValueRow(NSString *title, NSTextField **value) {
+    NSStackView *row = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 10);
+    NSTextField *label = Label(title, 12, NSFontWeightRegular);
+    label.textColor = NSColor.secondaryLabelColor;
+    [row addArrangedSubview:label];
+    [row addArrangedSubview:YMSpacer()];
+    NSTextField *field = Label(@"—", 12, NSFontWeightMedium);
+    field.alignment = NSTextAlignmentRight;
+    [row addArrangedSubview:field];
+    *value = field;
+    return row;
+}
+@interface YMDocumentView : NSView
+@end
+@implementation YMDocumentView
+- (BOOL)isFlipped { return YES; }
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    [[NSColor.windowBackgroundColor blendedColorWithFraction:0.035 ofColor:NSColor.labelColor] setFill];
+    NSRectFill(self.bounds);
+}
+@end
 
 @implementation ADController
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    if (self.previewMode) return;
     (void)notification;
     self.virtualDisplay = [[VDVirtualDisplay alloc] initWithSerialNumber:0x41443101];
+    self.windowRecovery = [[YMWindowRecovery alloc] initWithCheckpointURL:nil];
     self.targets = @[];
     self.systemAssertion = kIOPMNullAssertionID;
     self.displayAssertion = kIOPMNullAssertionID;
@@ -162,9 +242,9 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
         [NSString stringWithFormat:@"Yomado-%@.json", NSUUID.UUID.UUIDString]];
     [self buildMenu];
     NSMenu *main = [[NSMenu alloc] init];
-    NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"Yomado" action:nil keyEquivalent:@""];
-    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"Yomado"];
-    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出 Yomado" action:@selector(quit:) keyEquivalent:@"q"];
+    NSMenuItem *appItem = [[NSMenuItem alloc] initWithTitle:@"yomado" action:nil keyEquivalent:@""];
+    NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"yomado"];
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出 yomado" action:@selector(quit:) keyEquivalent:@"q"];
     quitItem.target = self;
     [appMenu addItem:quitItem];
     appItem.submenu = appMenu;
@@ -187,12 +267,16 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
                                                        userInfo:nil repeats:YES];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(systemWillSleep:)
           name:NSWorkspaceWillSleepNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(displayParametersChanged:)
+          name:NSApplicationDidChangeScreenParametersNotification object:nil];
 }
 - (void)buildMenu {
+    if (self.previewMode) return;
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"display.2" accessibilityDescription:@"Agent 虚拟屏"];
-    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Yomado"];
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"yomado"];
     for (NSArray *row in @[@[@"打开控制面板", NSStringFromSelector(@selector(showWindow:))],
+                           @[@"微信返回原显示器", NSStringFromSelector(@selector(wechatRestore:))],
                            @[@"恢复实体显示器", NSStringFromSelector(@selector(restore:))],
                            @[@"停止并移除虚拟屏", NSStringFromSelector(@selector(stop:))],
                            @[@"退出", NSStringFromSelector(@selector(quit:))]]) {
@@ -203,112 +287,413 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     self.statusItem.menu = menu;
 }
 - (void)buildWindow {
-    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 590)
-         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
+    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 920, 820)
+         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
          backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"Yomado · Agent 虚拟屏";
-    self.window.delegate = self;
+    self.window.title = @"yomado";
+    self.window.titlebarAppearsTransparent = YES;
+    self.window.titleVisibility = NSWindowTitleHidden;
+    self.window.contentMinSize = NSMakeSize(860, 680);
+    self.window.delegate = self.previewMode ? nil : self;
     self.window.releasedWhenClosed = NO;
-    [self.window center];
-    NSStackView *stack = [[NSStackView alloc] init];
-    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-    stack.alignment = NSLayoutAttributeLeading;
-    stack.spacing = 16;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.window.contentView addSubview:stack];
+    if (!self.previewMode) [self.window center];
+
+    NSScrollView *scroll = [[NSScrollView alloc] init];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.drawsBackground = YES;
+    scroll.backgroundColor = NSColor.windowBackgroundColor;
+    scroll.hasVerticalScroller = YES;
+    scroll.autohidesScrollers = YES;
+    [self.window.contentView addSubview:scroll];
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:self.window.contentView.leadingAnchor constant:28],
-        [stack.trailingAnchor constraintEqualToAnchor:self.window.contentView.trailingAnchor constant:-28],
-        [stack.topAnchor constraintEqualToAnchor:self.window.contentView.topAnchor constant:26]
+        [scroll.leadingAnchor constraintEqualToAnchor:self.window.contentView.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:self.window.contentView.trailingAnchor],
+        [scroll.topAnchor constraintEqualToAnchor:self.window.contentView.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:self.window.contentView.bottomAnchor]
     ]];
-    [stack addArrangedSubview:Label(@"让 Agent 工作，让实体屏休息", 23, NSFontWeightSemibold)];
-    [stack addArrangedSubview:Label(@"为 MD、Blender 等应用保留图形桌面。创建虚拟屏后，再测试实体屏能否进入待机。", 13, NSFontWeightRegular)];
-    self.statusLabel = Label(@"尚未创建虚拟屏", 16, NSFontWeightSemibold);
-    self.statusLabel.textColor = NSColor.systemBlueColor;
-    [stack addArrangedSubview:self.statusLabel];
-    self.inventoryLabel = Label(@"正在读取显示器…", 13, NSFontWeightRegular);
-    [stack addArrangedSubview:self.inventoryLabel];
-    NSStackView *resolutionRow = [[NSStackView alloc] init];
-    resolutionRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    resolutionRow.spacing = 12;
-    [resolutionRow addArrangedSubview:Label(@"虚拟桌面", 13, NSFontWeightMedium)];
+    YMDocumentView *document = [[YMDocumentView alloc] initWithFrame:NSMakeRect(0, 0, 920, 760)];
+    document.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.documentView = document;
+    NSStackView *stack = YMStack(NSUserInterfaceLayoutOrientationVertical, 18);
+    [document addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [document.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],
+        [document.leadingAnchor constraintEqualToAnchor:scroll.contentView.leadingAnchor],
+        [document.topAnchor constraintEqualToAnchor:scroll.contentView.topAnchor],
+        [document.heightAnchor constraintGreaterThanOrEqualToAnchor:scroll.contentView.heightAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:document.leadingAnchor constant:28],
+        [stack.trailingAnchor constraintEqualToAnchor:document.trailingAnchor constant:-28],
+        [stack.topAnchor constraintEqualToAnchor:document.topAnchor constant:18],
+        [stack.bottomAnchor constraintEqualToAnchor:document.bottomAnchor constant:-22]
+    ]];
+
+    NSStackView *header = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 14);
+    NSURL *iconURL = [NSBundle.mainBundle URLForResource:@"Yomado" withExtension:@"icns"];
+    NSImage *appIcon = iconURL ? [[NSImage alloc] initWithContentsOfURL:iconURL] : nil;
+    if (appIcon) {
+        NSImageView *iconView = [NSImageView imageViewWithImage:appIcon];
+        iconView.imageScaling = NSImageScaleProportionallyUpOrDown;
+        [iconView.widthAnchor constraintEqualToConstant:60].active = YES;
+        [iconView.heightAnchor constraintEqualToConstant:60].active = YES;
+        [iconView setAccessibilityLabel:@"yomado 夜窗图标"];
+        [header addArrangedSubview:iconView];
+        if (!self.previewMode) NSApp.applicationIconImage = appIcon;
+    }
+    NSStackView *brand = YMStack(NSUserInterfaceLayoutOrientationVertical, 4);
+    [brand addArrangedSubview:Label(@"yomado", 30, NSFontWeightSemibold)];
+    NSTextField *subtitle = Label(@"为视觉 Agent 留一块工作屏", 13, NSFontWeightRegular);
+    subtitle.textColor = NSColor.secondaryLabelColor;
+    [brand addArrangedSubview:subtitle];
+    [header addArrangedSubview:brand];
+    [header addArrangedSubview:YMSpacer()];
+    self.statusPill = [[YMStatusPill alloc] init];
+    [header addArrangedSubview:self.statusPill];
+    [stack addArrangedSubview:header]; YMFillWidth(header, stack);
+
+    NSStackView *workspaceContent;
+    NSView *workspace = YMCard(&workspaceContent);
+    NSStackView *workspaceRow = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 20);
+    workspaceRow.alignment = NSLayoutAttributeTop;
+    NSStackView *layout = YMStack(NSUserInterfaceLayoutOrientationVertical, 7);
+    [layout setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [layout addArrangedSubview:Label(@"桌面排列", 14, NSFontWeightSemibold)];
+    self.inventoryLabel = Label(@"正在读取显示器…", 11, NSFontWeightRegular);
+    self.inventoryLabel.textColor = NSColor.secondaryLabelColor;
+    [layout addArrangedSubview:self.inventoryLabel]; YMFillWidth(self.inventoryLabel, layout);
+    self.topologyView = [[YMTopologyView alloc] init];
+    self.topologyView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.topologyView.heightAnchor constraintEqualToConstant:190].active = YES;
+    [layout addArrangedSubview:self.topologyView]; YMFillWidth(self.topologyView, layout);
+    self.placementLabel = Label(@"新虚拟屏默认放在实体屏右侧，实体主屏保持原位。", 12, NSFontWeightRegular);
+    self.placementLabel.textColor = NSColor.secondaryLabelColor;
+    [layout addArrangedSubview:self.placementLabel]; YMFillWidth(self.placementLabel, layout);
+    [workspaceRow addArrangedSubview:layout];
+    NSBox *divider = [[NSBox alloc] init];
+    divider.boxType = NSBoxSeparator;
+    divider.translatesAutoresizingMaskIntoConstraints = NO;
+    [divider.widthAnchor constraintEqualToConstant:1].active = YES;
+    [divider.heightAnchor constraintEqualToConstant:260].active = YES;
+    [workspaceRow addArrangedSubview:divider];
+    NSStackView *session = YMStack(NSUserInterfaceLayoutOrientationVertical, 12);
+    [session.widthAnchor constraintEqualToConstant:246].active = YES;
+    [session addArrangedSubview:Label(@"Agent 工作屏", 14, NSFontWeightSemibold)];
+    self.sessionHeadline = Label(@"从一块虚拟屏开始", 21, NSFontWeightSemibold);
+    [session addArrangedSubview:self.sessionHeadline]; YMFillWidth(self.sessionHeadline, session);
+    self.sessionCaption = Label(@"给截图与键鼠操作保留桌面，实体屏继续供你使用。", 12, NSFontWeightRegular);
+    self.sessionCaption.textColor = NSColor.secondaryLabelColor;
+    [session addArrangedSubview:self.sessionCaption]; YMFillWidth(self.sessionCaption, session);
+    NSTextField *resolutionValue;
+    NSStackView *resolutionValueRow = YMValueRow(@"桌面尺寸", &resolutionValue);
+    self.sessionResolution = resolutionValue;
+    [session addArrangedSubview:resolutionValueRow]; YMFillWidth(resolutionValueRow, session);
+    NSTextField *wakeValue;
+    NSStackView *wakeRow = YMValueRow(@"保持唤醒", &wakeValue);
+    self.wakeLabel = wakeValue;
+    [session addArrangedSubview:wakeRow]; YMFillWidth(wakeRow, session);
+    self.createButton = ADButton(@"创建虚拟屏", self, @selector(primaryAction:));
+    self.createButton.bezelColor = NSColor.controlAccentColor;
+    self.createButton.controlSize = NSControlSizeLarge;
+    [self.createButton.heightAnchor constraintEqualToConstant:34].active = YES;
+    [session addArrangedSubview:self.createButton]; YMFillWidth(self.createButton, session);
+    [workspaceRow addArrangedSubview:session];
+    [workspaceContent addArrangedSubview:workspaceRow]; YMFillWidth(workspaceRow, workspaceContent);
+    [stack addArrangedSubview:workspace]; YMFillWidth(workspace, stack);
+
+    NSStackView *settingsContent;
+    NSView *settings = YMCard(&settingsContent);
+    NSStackView *settingsRow = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 14);
+    [settingsRow addArrangedSubview:Label(@"虚拟桌面", 14, NSFontWeightSemibold)];
+    [settingsRow addArrangedSubview:YMSpacer()];
+    NSTextField *resolutionLabel = Label(@"分辨率", 12, NSFontWeightRegular);
+    resolutionLabel.textColor = NSColor.secondaryLabelColor;
+    [settingsRow addArrangedSubview:resolutionLabel];
     self.resolution = [[NSPopUpButton alloc] init];
     [self.resolution addItemsWithTitles:@[@"1920 × 1080", @"2560 × 1440"]];
-    [resolutionRow addArrangedSubview:self.resolution];
-    self.hiDPIBox = [NSButton checkboxWithTitle:@"HiDPI（更清晰）" target:nil action:NULL];
-    [resolutionRow addArrangedSubview:self.hiDPIBox];
-    [stack addArrangedSubview:resolutionRow];
-    NSStackView *physicalRow = [[NSStackView alloc] init];
-    physicalRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    physicalRow.spacing = 12;
-    [physicalRow addArrangedSubview:Label(@"要关闭的实体屏", 13, NSFontWeightMedium)];
-    self.physicalChoice = [[NSPopUpButton alloc] init];
-    [self.physicalChoice.widthAnchor constraintGreaterThanOrEqualToConstant:230].active = YES;
-    [physicalRow addArrangedSubview:self.physicalChoice];
-    [stack addArrangedSubview:physicalRow];
-    NSStackView *actions = [[NSStackView alloc] init];
-    actions.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    actions.spacing = 12;
-    self.createButton = ADButton(@"1. 创建虚拟屏", self, @selector(create:));
-    self.testButton = ADButton(@"实验：关屏测试 15 秒", self, @selector(startTrial:));
-    [actions addArrangedSubview:self.createButton];
-    [actions addArrangedSubview:self.testButton];
-    [stack addArrangedSubview:actions];
-    NSStackView *recovery = [[NSStackView alloc] init];
-    recovery.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    recovery.spacing = 12;
-    self.keepButton = ADButton(@"确认可操作，保持关屏", self, @selector(keepOff:));
-    self.keepButton.enabled = NO;
-    self.restoreButton = ADButton(@"恢复实体屏", self, @selector(restore:));
-    [recovery addArrangedSubview:self.keepButton];
-    [recovery addArrangedSubview:self.restoreButton];
-    [recovery addArrangedSubview:ADButton(@"停止虚拟屏", self, @selector(stop:))];
-    [stack addArrangedSubview:recovery];
-    self.detailLabel = Label(@"先通过远程查看虚拟屏，确认能截图和点击。\n关屏测试未确认会在 15 秒后恢复；恢复快捷键：⌃⌥⌘R。", 13, NSFontWeightRegular);
-    [stack addArrangedSubview:self.detailLabel];
-    NSTextField *footer = Label(@"关闭窗口后应用仍留在菜单栏。退出前会恢复实体屏。\n此工具保持桌面唤醒；系统的锁屏与登录设置由你管理。", 12, NSFontWeightRegular);
-    footer.textColor = NSColor.secondaryLabelColor;
-    [stack addArrangedSubview:footer];
-    for (NSView *view in @[stack.arrangedSubviews[1], self.inventoryLabel, self.detailLabel, footer]) {
-        [view.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active = YES;
+    self.resolution.target = self;
+    self.resolution.action = @selector(presentationSettingsChanged:);
+    [self.resolution setAccessibilityLabel:@"虚拟桌面分辨率"];
+    [self.resolution.widthAnchor constraintEqualToConstant:170].active = YES;
+    [settingsRow addArrangedSubview:self.resolution];
+    self.hiDPIBox = [NSButton checkboxWithTitle:@"HiDPI 更清晰" target:self action:@selector(presentationSettingsChanged:)];
+    [settingsRow addArrangedSubview:self.hiDPIBox];
+    [settingsContent addArrangedSubview:settingsRow]; YMFillWidth(settingsRow, settingsContent);
+    NSTextField *settingsNote = Label(@"运行时更改分辨率需先停止虚拟屏。排列位置可在系统显示器设置中调整。", 11, NSFontWeightRegular);
+    settingsNote.textColor = NSColor.secondaryLabelColor;
+    [settingsContent addArrangedSubview:settingsNote]; YMFillWidth(settingsNote, settingsContent);
+    [stack addArrangedSubview:settings]; YMFillWidth(settings, stack);
+
+    NSStackView *workflow = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    NSArray *steps = @[@"① 创建虚拟屏", @"② 只移入 Agent 所需窗口", @"③ 让 Agent 截图与点击"];
+    for (NSUInteger index = 0; index < steps.count; index++) {
+        NSTextField *step = Label(steps[index], 12, NSFontWeightMedium);
+        step.textColor = NSColor.secondaryLabelColor;
+        [workflow addArrangedSubview:step];
+        [step.widthAnchor constraintEqualToAnchor:workflow.widthAnchor multiplier:1.0 / 3.0 constant:-8].active = YES;
     }
+    [stack addArrangedSubview:workflow]; YMFillWidth(workflow, stack);
+
+    NSStackView *statusContent;
+    NSView *status = YMCard(&statusContent);
+    statusContent.spacing = 7;
+    NSStackView *statusRow = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    self.statusLabel = Label(@"尚未创建虚拟屏", 13, NSFontWeightSemibold);
+    [statusRow addArrangedSubview:self.statusLabel];
+    [statusRow addArrangedSubview:YMSpacer()];
+    self.keepButton = ADButton(@"确认并保持输出关闭", self, @selector(keepOff:));
+    self.keepButton.hidden = YES;
+    self.keepButton.enabled = NO;
+    [statusRow addArrangedSubview:self.keepButton];
+    self.restoreButton = ADButton(@"恢复实体屏", self, @selector(restore:));
+    self.restoreButton.hidden = YES;
+    [statusRow addArrangedSubview:self.restoreButton];
+    [statusContent addArrangedSubview:statusRow]; YMFillWidth(statusRow, statusContent);
+    self.detailLabel = Label(@"yomado 不会自动搬动其他应用。只把 Agent 需要的窗口移入虚拟屏，你的其他界面留在实体屏。", 12, NSFontWeightRegular);
+    self.detailLabel.textColor = NSColor.secondaryLabelColor;
+    [statusContent addArrangedSubview:self.detailLabel]; YMFillWidth(self.detailLabel, statusContent);
+    [stack addArrangedSubview:status]; YMFillWidth(status, stack);
+
+    NSStackView *wechatContent;
+    NSView *wechat = YMCard(&wechatContent);
+    wechatContent.spacing = 8;
+    NSStackView *wechatHeader = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    [wechatHeader addArrangedSubview:Label(@"微信窗口", 14, NSFontWeightSemibold)];
+    [wechatHeader addArrangedSubview:YMSpacer()];
+    self.wechatPermissionButton = ADButton(@"打开控制权限设置…", self, @selector(wechatPermission:));
+    self.wechatPermissionButton.enabled = NO;
+    [wechatHeader addArrangedSubview:self.wechatPermissionButton];
+    [wechatContent addArrangedSubview:wechatHeader]; YMFillWidth(wechatHeader, wechatContent);
+    self.wechatStatusLabel = Label(@"尚未记录窗口位置。移入前先保留原实体屏位置，便于恢复。", 12, NSFontWeightRegular);
+    self.wechatStatusLabel.textColor = NSColor.secondaryLabelColor;
+    [wechatContent addArrangedSubview:self.wechatStatusLabel]; YMFillWidth(self.wechatStatusLabel, wechatContent);
+    NSString *permissionPane = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+        ? @"设备控制和数据访问" : @"辅助功能";
+    self.wechatPermissionGuide = Label([NSString stringWithFormat:@"① 点击右上方按钮，进入“隐私与安全 → %@”。\n② 在列表中开启 yomado；若未出现，点“＋”选择此应用。\n③ 回到这里，权限状态会自动更新，再开始移屏。", permissionPane], 12, NSFontWeightRegular);
+    self.wechatPermissionGuide.textColor = NSColor.secondaryLabelColor;
+    [wechatContent addArrangedSubview:self.wechatPermissionGuide]; YMFillWidth(self.wechatPermissionGuide, wechatContent);
+    NSStackView *wechatActions = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    self.wechatMoveButton = ADButton(@"记住位置并移入虚拟屏", self, @selector(wechatMove:));
+    self.wechatMoveButton.enabled = NO;
+    self.wechatRestoreButton = ADButton(@"返回原显示器", self, @selector(wechatRestore:));
+    self.wechatRestoreButton.enabled = NO;
+    [wechatActions addArrangedSubview:self.wechatMoveButton];
+    [wechatActions addArrangedSubview:self.wechatRestoreButton];
+    [wechatActions addArrangedSubview:YMSpacer()];
+    NSTextField *wechatPrivacy = Label(@"仅记窗口位置，不保存聊天或登录信息", 11, NSFontWeightRegular);
+    wechatPrivacy.textColor = NSColor.tertiaryLabelColor;
+    [wechatActions addArrangedSubview:wechatPrivacy];
+    [wechatContent addArrangedSubview:wechatActions]; YMFillWidth(wechatActions, wechatContent);
+    NSTextField *wechatNote = Label(@"登录提示自动识别有限；手动返回入口始终保留，登录与验证由你本人完成。", 11, NSFontWeightRegular);
+    wechatNote.textColor = NSColor.secondaryLabelColor;
+    [wechatContent addArrangedSubview:wechatNote]; YMFillWidth(wechatNote, wechatContent);
+    [stack addArrangedSubview:wechat]; YMFillWidth(wechat, stack);
+
+    NSStackView *experiments = YMStack(NSUserInterfaceLayoutOrientationVertical, 10);
+    self.experimentToggle = [NSButton buttonWithTitle:@"实验功能 · 实体屏输出测试" target:self action:@selector(toggleExperiments:)];
+    self.experimentToggle.bordered = NO;
+    self.experimentToggle.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
+    self.experimentToggle.contentTintColor = NSColor.secondaryLabelColor;
+    self.experimentToggle.image = [NSImage imageWithSystemSymbolName:@"chevron.right" accessibilityDescription:nil];
+    self.experimentToggle.imagePosition = NSImageLeft;
+    [self.experimentToggle setAccessibilityLabel:@"展开实验性实体屏输出测试"];
+    [experiments addArrangedSubview:self.experimentToggle];
+    NSStackView *experimentContent;
+    self.experimentContent = YMCard(&experimentContent);
+    self.experimentContent.hidden = YES;
+    NSTextField *warning = Label(@"会改变主屏与显示排列，macOS 可能移动其他窗口。请先保存工作，并确保能直接接触 Mac 和显示器。", 12, NSFontWeightMedium);
+    warning.textColor = NSColor.systemOrangeColor;
+    [experimentContent addArrangedSubview:warning]; YMFillWidth(warning, experimentContent);
+    NSStackView *physicalRow = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    [physicalRow addArrangedSubview:Label(@"选择实体屏", 12, NSFontWeightRegular)];
+    self.physicalChoice = [[NSPopUpButton alloc] init];
+    [self.physicalChoice setAccessibilityLabel:@"实验中关闭输出的实体显示器"];
+    [self.physicalChoice.widthAnchor constraintGreaterThanOrEqualToConstant:200].active = YES;
+    [physicalRow addArrangedSubview:self.physicalChoice];
+    [physicalRow addArrangedSubview:YMSpacer()];
+    self.testButton = ADButton(@"测试 15 秒", self, @selector(startTrial:));
+    [physicalRow addArrangedSubview:self.testButton];
+    [experimentContent addArrangedSubview:physicalRow]; YMFillWidth(physicalRow, experimentContent);
+    NSTextField *experimentNote = Label(@"未确认将尝试自动恢复 · 恢复快捷键 ⌃⌥⌘R · 软件不测量显示器实际功耗", 11, NSFontWeightRegular);
+    experimentNote.textColor = NSColor.secondaryLabelColor;
+    [experimentContent addArrangedSubview:experimentNote]; YMFillWidth(experimentNote, experimentContent);
+    [experiments addArrangedSubview:self.experimentContent]; YMFillWidth(self.experimentContent, experiments);
+    [stack addArrangedSubview:experiments]; YMFillWidth(experiments, stack);
+
+    NSStackView *footer = YMStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
+    NSTextField *boundary = Label(@"同一登录会话，焦点与键鼠仍共享。", 11, NSFontWeightRegular);
+    boundary.textColor = NSColor.tertiaryLabelColor;
+    [footer addArrangedSubview:boundary];
+    [footer addArrangedSubview:YMSpacer()];
+    NSString *versionNumber = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0.2.0";
+    NSTextField *version = Label([NSString stringWithFormat:self.previewMode ? @"界面预览 · v%@ · 实验版" : @"v%@ · 实验版", versionNumber], 11, NSFontWeightRegular);
+    version.textColor = NSColor.tertiaryLabelColor;
+    [footer addArrangedSubview:version];
+    [stack addArrangedSubview:footer]; YMFillWidth(footer, stack);
+}
+- (BOOL)presentationHasVirtualDisplay {
+    return self.previewMode ? ![self.previewState isEqualToString:@"empty"] : self.virtualDisplay.isCreated;
+}
+- (void)presentationSettingsChanged:(id)sender {
+    (void)sender;
+    [self updateInventory];
+}
+- (void)primaryAction:(id)sender {
+    if (self.previewMode) return;
+    if (self.virtualDisplay.isCreated) [self stop:sender]; else [self create:sender];
+}
+- (void)toggleExperiments:(id)sender {
+    (void)sender;
+    self.experimentsExpanded = !self.experimentsExpanded;
+    [self updateExperimentDisclosure];
+}
+- (void)updateExperimentDisclosure {
+    self.experimentContent.hidden = !self.experimentsExpanded;
+    self.experimentToggle.image = [NSImage imageWithSystemSymbolName:self.experimentsExpanded ? @"chevron.down" : @"chevron.right"
+                                            accessibilityDescription:nil];
+    [self.experimentToggle setAccessibilityLabel:self.experimentsExpanded ? @"收起实验性实体屏输出测试" : @"展开实验性实体屏输出测试"];
+    [self.window.contentView layoutSubtreeIfNeeded];
+}
+- (void)displayParametersChanged:(NSNotification *)notification {
+    (void)notification;
+    [self updateInventory];
+}
+- (void)updateWeChatControls {
+    if (self.previewMode || !self.windowRecovery) return;
+    BOOL trusted = self.windowRecovery.accessibilityTrusted;
+    self.wechatPermissionButton.hidden = trusted;
+    self.wechatPermissionButton.enabled = !trusted;
+    self.wechatPermissionGuide.hidden = trusted;
+    self.wechatMoveButton.enabled = self.windowRecovery.canMove && !self.armed && !self.preparing && !self.restoring;
+    self.wechatRestoreButton.enabled = self.windowRecovery.canRestore;
+    self.wechatStatusLabel.stringValue = trusted ? self.windowRecovery.statusText
+        : self.wechatPermissionMessage ?: @"辅助功能未开启 · 开启后才能记住和移动微信窗口。";
+    self.wechatStatusLabel.textColor = trusted ? NSColor.secondaryLabelColor : NSColor.labelColor;
+}
+- (void)wechatPermission:(id)sender {
+    (void)sender;
+    if (self.previewMode) return;
+    NSError *error = nil;
+    BOOL opened = [self.windowRecovery openAccessibilitySettings:&error];
+    self.wechatPermissionMessage = opened
+        ? @"设置已打开，仍需你开启 yomado 开关。授权后这里会自动更新。"
+        : error.localizedDescription ?: @"请手动进入系统设置的控制权限页面，开启 yomado。";
+    [self updateWeChatControls];
+}
+- (void)wechatMove:(id)sender {
+    (void)sender;
+    if (self.previewMode || self.armed || self.preparing || self.restoring) return;
+    [self updateInventory];
+    NSError *error = nil;
+    [self.windowRecovery moveWeChatToVirtual:&error];
+    [self updateWeChatControls];
+}
+- (void)wechatRestore:(id)sender {
+    (void)sender;
+    if (self.previewMode) return;
+    [self updateInventory];
+    NSError *error = nil;
+    [self.windowRecovery restoreWeChat:&error];
+    [self updateWeChatControls];
 }
 - (void)showWindow:(id)sender {
     (void)sender;
+    if (self.previewMode) return;
     [NSApp activateIgnoringOtherApps:YES];
     [self.window makeKeyAndOrderFront:nil];
 }
 - (BOOL)windowShouldClose:(NSWindow *)window { [window orderOut:nil]; return NO; }
 - (void)updateInventory {
-    NSArray *snapshot = DisplaySnapshot();
-    NSMutableArray *lines = [NSMutableArray array];
+    NSArray *snapshot = self.previewMode ? self.previewSnapshot : DisplaySnapshot();
+    if (!self.previewMode) {
+        [self.windowRecovery refreshWithVirtualDisplayID:self.virtualDisplay.displayID displaySnapshot:snapshot];
+        [self updateWeChatControls];
+    }
+    BOOL created = [self presentationHasVirtualDisplay];
+    BOOL armed = self.previewMode ? [self.previewState isEqualToString:@"trial"] : self.armed;
+    CGDirectDisplayID virtualID = self.previewMode ? (created ? 902 : 0) : self.virtualDisplay.displayID;
+    NSUInteger physicalCount = 0, virtualCount = 0;
+    NSDictionary *owned = nil;
     CGDirectDisplayID selected = [self.physicalChoice.selectedItem.representedObject unsignedIntValue];
     [self.physicalChoice removeAllItems];
     for (NSDictionary *item in snapshot) {
         CGDirectDisplayID ident = [item[@"displayID"] unsignedIntValue];
         NSString *name = item[@"name"] ?: [NSString stringWithFormat:@"显示器 %u", ident];
-        [lines addObject:[NSString stringWithFormat:@"%@ · %@ × %@%@", name,
-             item[@"logicalWidth"], item[@"logicalHeight"], [item[@"isMain"] boolValue] ? @" · 主屏" : @""]];
-        if (ident != self.virtualDisplay.displayID && ![VDVirtualDisplay isVirtualDisplay:ident]) {
+        BOOL virtualDisplay = [item[@"isVirtual"] boolValue];
+        if (virtualDisplay) virtualCount++; else physicalCount++;
+        if (ident == virtualID) owned = item;
+        if (ident != virtualID && !virtualDisplay) {
             [self.physicalChoice addItemWithTitle:name];
             self.physicalChoice.lastItem.representedObject = @(ident);
             if (ident == selected) [self.physicalChoice selectItem:self.physicalChoice.lastItem];
         }
     }
-    // Disabled targets disappear from online lists; keep a restore identity.
-    if (self.armed) {
-        for (NSNumber *ident in self.targets) [lines addObject:[NSString stringWithFormat:@"实体屏 %@ · 已请求待机", ident]];
+    self.inventoryLabel.stringValue = [NSString stringWithFormat:@"%lu 块实体屏 · %lu 块虚拟屏 · 显示当前实际排列",
+        (unsigned long)physicalCount, (unsigned long)virtualCount];
+    self.topologyView.ownedDisplayID = virtualID;
+    self.topologyView.snapshot = snapshot;
+    self.resolution.enabled = !created;
+    self.hiDPIBox.enabled = !created;
+    self.createButton.title = created ? @"停止虚拟屏" : @"创建虚拟屏";
+    self.createButton.bezelColor = created ? nil : NSColor.controlAccentColor;
+    self.createButton.keyEquivalent = created ? @"" : @"\r";
+    self.window.defaultButtonCell = created ? nil : (NSButtonCell *)self.createButton.cell;
+    self.createButton.enabled = !armed && !self.preparing && !self.restoring && !self.recoveryRequested && !self.layoutChangedForTrial;
+    BOOL switchAvailable = self.previewMode ? YES : EnableAPI() && self.hotkey && self.keyHandler;
+    self.testButton.enabled = created && !armed && !self.preparing
+        && !self.recoveryRequested && !self.layoutChangedForTrial && switchAvailable && self.physicalChoice.numberOfItems > 0;
+    self.physicalChoice.enabled = !armed && !self.preparing;
+    BOOL recoveryNeeded = armed || self.preparing || self.layoutChangedForTrial || self.recoveryRequested;
+    self.restoreButton.enabled = recoveryNeeded;
+    self.restoreButton.hidden = !recoveryNeeded;
+    self.keepButton.hidden = !(armed && (self.previewMode || self.trialDeadline > 0));
+    self.keepButton.enabled = armed && (self.previewMode || self.trialDeadline > 0);
+    if (recoveryNeeded) self.experimentsExpanded = YES;
+    [self updateExperimentDisclosure];
+
+    if (self.restoring || self.recoveryRequested) {
+        self.statusPill.text = @"正在恢复"; self.statusPill.tint = NSColor.systemOrangeColor;
+        self.sessionHeadline.stringValue = @"正在恢复实体屏";
+        self.sessionCaption.stringValue = @"保留虚拟桌面，直到恢复完成。";
+    } else if (armed && !self.preparing && !self.previewMode && self.trialDeadline <= 0) {
+        self.statusPill.text = @"虚拟桌面运行中"; self.statusPill.tint = NSColor.controlAccentColor;
+        self.sessionHeadline.stringValue = @"工作屏已保留";
+        self.sessionCaption.stringValue = @"所选实体屏输出已关闭。软件无法判断显示器真实功耗。";
+    } else if (armed || self.preparing) {
+        self.statusPill.text = @"实验测试中"; self.statusPill.tint = NSColor.systemOrangeColor;
+        self.sessionHeadline.stringValue = @"正在测试输出";
+        self.sessionCaption.stringValue = @"在虚拟屏确认操作正常；未确认将尝试自动恢复。";
+    } else if (created) {
+        self.statusPill.text = @"虚拟屏运行中"; self.statusPill.tint = NSColor.controlAccentColor;
+        self.sessionHeadline.stringValue = @"工作屏已就绪";
+        self.sessionCaption.stringValue = @"图形桌面已保留。请确认 Agent 能截图并点击目标窗口。";
+    } else {
+        self.statusPill.text = @"虚拟屏未启动"; self.statusPill.tint = NSColor.secondaryLabelColor;
+        self.sessionHeadline.stringValue = @"从一块虚拟屏开始";
+        self.sessionCaption.stringValue = @"给截图与键鼠操作保留桌面，实体屏继续供你使用。";
     }
-    self.inventoryLabel.stringValue = [lines componentsJoinedByString:@"\n"];
-    self.resolution.enabled = !self.virtualDisplay.isCreated;
-    self.hiDPIBox.enabled = !self.virtualDisplay.isCreated;
-    self.createButton.enabled = !self.virtualDisplay.isCreated && !self.preparing;
-    self.testButton.enabled = self.virtualDisplay.isCreated && !self.armed && !self.preparing
-        && !self.recoveryRequested && !self.layoutChangedForTrial && EnableAPI() && self.hotkey && self.physicalChoice.numberOfItems > 0;
-    self.physicalChoice.enabled = !self.armed && !self.preparing;
-    self.restoreButton.enabled = self.armed || self.preparing || self.layoutChangedForTrial;
+    NSString *resolution = owned ? [NSString stringWithFormat:@"%@ × %@", owned[@"logicalWidth"], owned[@"logicalHeight"]]
+        : self.resolution.titleOfSelectedItem;
+    self.sessionResolution.stringValue = resolution ?: @"—";
+    BOOL assertionsActive = self.previewMode ? created : self.systemAssertion != kIOPMNullAssertionID && self.displayAssertion != kIOPMNullAssertionID;
+    self.wakeLabel.stringValue = assertionsActive ? @"已请求" : @"未请求";
+    if ([owned[@"isMain"] boolValue]) {
+        self.placementLabel.stringValue = @"虚拟屏当前是主屏。普通创建流程不会修改实体主屏。";
+    } else if (owned) {
+        NSNumber *right = YMPhysicalRightEdge(snapshot);
+        self.placementLabel.stringValue = right && [owned[@"x"] doubleValue] >= right.doubleValue
+            ? @"虚拟屏位于实体屏右侧 · 只移入指定 Agent 窗口"
+            : @"按当前排列显示 · 不自动改动其他屏幕或应用窗口";
+    } else {
+        self.placementLabel.stringValue = @"新虚拟屏默认放在实体屏右侧，实体主屏保持原位。";
+    }
+    if (self.previewMode) {
+        self.statusLabel.stringValue = armed ? @"实体屏输出测试 · 12 秒后自动恢复" : created ? @"虚拟屏已创建，实体屏仍开启" : @"尚未创建虚拟屏";
+        self.detailLabel.stringValue = armed ? @"这是实验性输出测试。恢复按钮和快捷键始终可用；软件无法测量显示器实际功耗。"
+            : @"yomado 不会自动搬动其他应用。只把 Agent 需要的窗口移入虚拟屏，你的其他界面留在实体屏。";
+        self.wechatStatusLabel.stringValue = @"辅助功能未开启 · 开启后才能记住和移动微信窗口。";
+    }
 }
 - (void)powerAssertions:(BOOL)on {
+    if (self.previewMode) return;
     if (on) {
         if (self.systemAssertion == kIOPMNullAssertionID)
             IOPMAssertionCreateWithName(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn,
@@ -323,6 +708,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     }
 }
 - (BOOL)setVirtualMain:(BOOL)virtualMain {
+    if (self.previewMode) return NO;
     CGDisplayConfigRef config = NULL;
     if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || !config) return NO;
     CGDirectDisplayID vd = self.virtualDisplay.displayID;
@@ -358,6 +744,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     return CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) == kCGErrorSuccess;
 }
 - (BOOL)placeNewVirtualAtRight {
+    if (self.previewMode) return NO;
     // Configure only the display we own. Never replay an earlier desktop layout.
     NSNumber *right = YMPhysicalRightEdge(DisplaySnapshot());
     if (!right || !ADDisplayActive(self.virtualDisplay.displayID)) return NO;
@@ -368,6 +755,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     return CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) == kCGErrorSuccess;
 }
 - (void)create:(id)sender {
+    if (self.previewMode) return;
     (void)sender;
     if (self.virtualDisplay.isCreated) return;
     NSUInteger width = self.resolution.indexOfSelectedItem == 0 ? 1920 : 2560;
@@ -397,6 +785,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     [self updateInventory];
 }
 - (BOOL)writeStateEnding:(BOOL)end {
+    if (self.previewMode) return NO;
     if (!self.statePath.length) return NO;
     NSMutableArray *origins = [NSMutableArray array];
     for (NSDictionary *item in self.originalLayout) {
@@ -409,6 +798,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     return [data writeToFile:self.statePath options:NSDataWritingAtomic error:nil];
 }
 - (void)finishWatchdog {
+    if (self.previewMode) return;
     [self writeStateEnding:YES];
     if (self.watchdog.running) [self.watchdog terminate];
     self.watchdog = nil;
@@ -416,6 +806,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
         [NSFileManager.defaultManager removeItemAtPath:[self.statePath stringByAppendingString:suffix] error:nil];
 }
 - (BOOL)ensureWatchdog {
+    if (self.previewMode) return NO;
     if (self.watchdog.running) return NO;
     [self finishWatchdog];
     self.statePath = [NSTemporaryDirectory() stringByAppendingPathComponent:
@@ -432,6 +823,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     return [self.watchdog launchAndReturnError:&error];
 }
 - (void)startTrial:(id)sender {
+    if (self.previewMode) return;
     (void)sender;
     if (self.armed || self.preparing || self.restoring || self.recoveryRequested || self.layoutChangedForTrial
         || !self.virtualDisplay.isCreated || !ADDisplayActive(self.virtualDisplay.displayID)) return;
@@ -503,6 +895,7 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     });
 }
 - (void)keepOff:(id)sender {
+    if (self.previewMode) return;
     (void)sender;
     if (!self.armed || self.trialDeadline <= 0 || !ADDisplayActive(self.virtualDisplay.displayID)) return;
     for (NSNumber *ident in self.targets) {
@@ -516,8 +909,10 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     self.statusLabel.stringValue = @"虚拟桌面运行中 · 实体屏已断开输出";
     self.detailLabel.stringValue = @"请确认实体屏确实不发光。输出已断开，但软件无法测量显示器的实际功耗。\n恢复：⌃⌥⌘R，或菜单栏「恢复实体显示器」。";
     [self writeStateEnding:NO];
+    [self updateInventory];
 }
 - (void)restore:(id)sender {
+    if (self.previewMode) return;
     (void)sender;
     if (self.restoring) return;
     self.restoring = YES;
@@ -562,7 +957,11 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     [self showWindow:nil];
 }
 - (void)tick:(NSTimer *)timer {
+    if (self.previewMode) return;
     (void)timer;
+    NSError *windowError = nil;
+    [self.windowRecovery pollForRecovery:&windowError];
+    [self updateWeChatControls];
     if (![self writeStateEnding:NO] && self.armed) { [self restore:nil]; return; }
     NSString *restoredPath = [self.statePath stringByAppendingString:@".restored"];
     if ([NSFileManager.defaultManager fileExistsAtPath:restoredPath]) {
@@ -579,9 +978,20 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
 }
 - (void)systemWillSleep:(NSNotification *)notification { (void)notification; [self restore:nil]; }
 - (void)stop:(id)sender {
+    if (self.previewMode) return;
     (void)sender;
     if (self.armed || self.preparing || self.layoutChangedForTrial) [self restore:nil];
     if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial) return;
+    if (self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay) {
+        [self updateInventory];
+        NSError *error = nil;
+        if (![self.windowRecovery restoreWeChat:&error]) {
+            self.statusLabel.stringValue = @"保留虚拟屏：请先恢复微信窗口";
+            self.detailLabel.stringValue = self.windowRecovery.statusText;
+            [self updateWeChatControls];
+            return;
+        }
+    }
     if (self.virtualDisplay.isCreated) {
         BOOL physicalActive = NO;
         for (NSDictionary *item in DisplaySnapshot()) {
@@ -611,9 +1021,11 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
 }
 - (void)quit:(id)sender { (void)sender; [NSApp terminate:nil]; }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    if (self.previewMode) return NSTerminateNow;
     (void)sender;
     [self stop:nil];
-    if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.virtualDisplay.isCreated) {
+    if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.virtualDisplay.isCreated
+        || self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay) {
         [self showWindow:nil];
         return NSTerminateCancel;
     }
@@ -621,7 +1033,9 @@ static NSButton *ADButton(NSString *title, id target, SEL action) {
     return NSTerminateNow;
 }
 - (void)applicationWillTerminate:(NSNotification *)notification {
+    if (self.previewMode) return;
     (void)notification;
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     [self.heartbeatTimer invalidate];
     if (self.hotkey) UnregisterEventHotKey(self.hotkey);
     if (self.keyHandler) RemoveEventHandler(self.keyHandler);
@@ -805,8 +1219,73 @@ static int WatchdogTest(NSString *directory, NSString *helperPath) {
     return pass && written ? 0 : 2;
 }
 
+// Synthetic fixtures only. This route deliberately never installs ADController as
+// the NSApplication delegate, starts a timer/menu/hotkey/watchdog, constructs a
+// VDVirtualDisplay, calls live display enumeration, or activates/orders a window.
+static NSArray<NSDictionary *> *UIPreviewSnapshot(BOOL created, BOOL trial) {
+    NSMutableArray *displays = [NSMutableArray array];
+    [displays addObject:@{@"displayID":@900, @"name":@"Studio Display 1", @"x":trial ? @1920 : @0, @"y":@0,
+        @"logicalWidth":@2560, @"logicalHeight":@1440, @"isMain":@(!trial), @"isVirtual":@NO, @"isActive":@(!trial), @"isOnline":@YES}];
+    [displays addObject:@{@"displayID":@901, @"name":@"Studio Display 2", @"x":trial ? @4480 : @2560, @"y":@0,
+        @"logicalWidth":@2560, @"logicalHeight":@1440, @"isMain":@NO, @"isVirtual":@NO, @"isActive":@YES, @"isOnline":@YES}];
+    if (created) [displays addObject:@{@"displayID":@902, @"name":@"Agent 虚拟屏", @"x":trial ? @0 : @5120, @"y":@0,
+        @"logicalWidth":@1920, @"logicalHeight":@1080, @"isMain":@(trial), @"isVirtual":@YES, @"isActive":@YES, @"isOnline":@YES}];
+    return displays;
+}
+static int PreviewUI(NSString *path, NSString *state, BOOL dark) {
+    if (![@[@"empty", @"running", @"trial"] containsObject:state]) {
+        fprintf(stderr, "Preview state must be empty, running, or trial.\n");
+        return 64;
+    }
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+    NSAppearance *appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+    NSApp.appearance = appearance;
+    ADController *controller = [[ADController alloc] init];
+    controller.previewMode = YES;
+    controller.previewState = state;
+    controller.previewSnapshot = UIPreviewSnapshot(![state isEqualToString:@"empty"], [state isEqualToString:@"trial"]);
+    [controller buildWindow];
+    controller.window.appearance = appearance;
+    [controller updateInventory];
+    NSView *content = controller.window.contentView;
+    [content layoutSubtreeIfNeeded];
+    NSScrollView *scroll = (NSScrollView *)content.subviews.firstObject;
+    CGFloat height = MAX(820, ceil(scroll.documentView.frame.size.height));
+    [controller.window setContentSize:NSMakeSize(920, height)];
+    [content layoutSubtreeIfNeeded];
+    // Native controls may settle their internal layers on a later run-loop turn.
+    // Only this hidden fixture window exists in the preview process.
+    for (NSUInteger pass = 0; pass < 3; pass++) {
+        [content displayIfNeeded];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+        [content layoutSubtreeIfNeeded];
+    }
+    NSBitmapImageRep *bitmap = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+    if (!bitmap) { fprintf(stderr, "Could not allocate UI preview bitmap.\n"); return 1; }
+    [content cacheDisplayInRect:content.bounds toBitmapImageRep:bitmap];
+    NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    NSError *error = nil;
+    if (!png || ![png writeToFile:path options:NSDataWritingAtomic error:&error]) {
+        fprintf(stderr, "Could not write UI preview (%s, %ld).\n", (error.domain ?: @"render").UTF8String, (long)error.code);
+        return 1;
+    }
+    printf("%s\n", JSONText(@{@"renderedFrom":@"synthetic-ui-fixtures", @"state":state,
+        @"appearance":dark ? @"dark" : @"light", @"pixelsWide":@(bitmap.pixelsWide), @"pixelsHigh":@(bitmap.pixelsHigh)}).UTF8String);
+    [controller.window close];
+    return 0;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        if (argc > 1 && strcmp(argv[1], "--preview-ui") == 0) {
+            if (argc < 3 || argc > 5 || (argc == 5 && strcmp(argv[4], "light") != 0 && strcmp(argv[4], "dark") != 0)) {
+                fprintf(stderr, "Usage: Yomado --preview-ui <png-path> [empty|running|trial] [light|dark]\n");
+                return 64;
+            }
+            return PreviewUI([NSString stringWithUTF8String:argv[2]],
+                argc > 3 ? [NSString stringWithUTF8String:argv[3]] : @"running", argc > 4 && strcmp(argv[4], "dark") == 0);
+        }
         if (argc > 1 && strcmp(argv[1], "--diagnose") == 0) {
             BOOL includeIdentifiers = argc == 3 && strcmp(argv[2], "--include-device-identifiers") == 0;
             if (argc > 2 && !includeIdentifiers) {

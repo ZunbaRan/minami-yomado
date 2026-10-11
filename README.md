@@ -25,6 +25,12 @@ These workflows still need a graphical desktop and a display surface for applica
 
 The virtual display belongs to your **existing login session**. It is not a separate operating system, user session, or isolated keyboard and mouse. Your agent and your own work share focus and input, so coordinate their use of the desktop. Yomado is not a remote desktop server or an agent: your existing tools still provide viewing, screenshots, and input.
 
+## Control panel
+
+![yomado control panel](docs/images/yomado-control.png)
+
+*Native control-panel preview with example display data. This image does not validate target-app input or monitor standby.*
+
 ## Build
 
 Requires macOS and Xcode or the Command Line Tools. The app uses system frameworks only; there are no third-party runtime dependencies.
@@ -60,6 +66,20 @@ Keep Yomado running while using its virtual display. Closing the control panel l
 
 Yomado does not change passwords, lock-screen policy, screen savers, or login settings. Its wake requests do not unlock a Mac. Screenshot and input permissions remain the responsibility of the tools that perform those actions.
 
+## WeChat window recovery (experimental)
+
+The control panel can remember WeChat's physical-screen position before moving its main window to yomado. Choose **Remember position and move to virtual display**, then use **Return to original display** whenever you need to handle WeChat yourself. The menu-bar app also exposes the return action. Other applications are not moved.
+
+If Accessibility permission is missing, the panel shows a guide and disables window movement. Choose **Open Control Permission Settings** (「打开控制权限设置…」) to open the relevant page under **Privacy & Security**, then enable yomado yourself. This page is called **Accessibility** on earlier macOS versions, and **Device Control & Data Access** on macOS 27. The guide uses the system's page name. If yomado is absent from the list, use **+** to select the app. The panel detects the updated permission automatically. Permission is requested only on that button click; opening the page does not grant it.
+
+Local builds are ad hoc signed. After rebuilding, macOS may retain a permission record tied to an older signature even though its switch appears enabled. If the panel still reports no permission after reopening the app, remove the old yomado entry in System Settings, add the current app with **+**, and enable it again. yomado does not reset or edit system permission records itself.
+
+While that move is pending, a limited check can recognize supported security/login dialogs and return WeChat to its physical screen without clicking the prompt. Ordinary chat-window contents are never scanned. Some WeChat versions do not expose those dialogs in a recognizable form; automatic return is not guaranteed, so keep the manual return action available. An automatic failure pauses further attempts. Stopping or quitting yomado is held if a pending WeChat return fails.
+
+The local checkpoint stores only the application ID, display UUID, window position/size and a recovery flag, under `~/Library/Application Support/dev.chekusu.yomado/`. It does not store chats, contacts, screenshots, passwords or authentication state. Returning a window cannot restore a logged-out account; complete login or verification yourself. If the original display is unavailable, recovery uses an available physical display and constrains the window to its bounds.
+
+This is window-placement recovery, not a claim that WeChat visual automation or logout recovery has passed end-to-end testing.
+
 ## Optional physical-output trial
 
 **This is an experimental action, not the default workflow.** It changes the main display and arrangement, which can cause macOS or applications to move other windows. Save your work first and test only while you can directly reach the Mac and monitor.
@@ -93,7 +113,15 @@ Pure policy tests can run without creating a display or opening an application:
 bash ./test.sh
 ```
 
-These tests check display-placement and diagnostic-redaction policies. They do not exercise private APIs or prove that a live display configuration succeeds.
+These tests check display placement, diagnostic redaction, and WeChat checkpoint/recovery policies. They do not exercise private APIs or prove that a live display configuration succeeds.
+
+Render the control panel with example data, without reading or changing the display arrangement, inspecting WeChat or activating a window:
+
+```sh
+./dist/Yomado.app/Contents/MacOS/Yomado --preview-ui ./test-output/control.png running light
+```
+
+Create the output directory first. Preview states are `empty`, `running` and `trial`; appearances are `light` and `dark`. The renderer needs macOS AppKit/WindowServer and draws its own hidden views. A preview is not a live display or target-app test.
 
 The following tests require an interactive macOS login session. **Do not run them automatically, in build-only CI, or while someone else is using the desktop.** They create and remove temporary displays and apply layout restoration, so windows may move. Save work and close other Yomado instances before running them.
 
@@ -110,7 +138,7 @@ Generated view images are **not** screenshots of Blender, Marvelous Designer, or
 
 ## Implementation
 
-`app/Yomado.m` contains the AppKit app and test entry points. `app/Watchdog.m` contains the recovery helper; `bridge/VDVirtualDisplay.*` wraps the virtual-display interface. The application namespace is `dev.chekusu.yomado`.
+`app/Yomado.m` contains the AppKit app and test entry points. `app/ControlUI.*` draws the control-panel components; `app/WindowRecovery.*` and its pure policy header handle the opt-in WeChat window checkpoint. `app/Watchdog.m` contains the recovery helper; `bridge/VDVirtualDisplay.*` wraps the virtual-display interface. The application namespace is `dev.chekusu.yomado`.
 
 The implementation uses private `CGVirtualDisplay` classes and dynamically discovers `CGSConfigureDisplayEnabled` / `SLSConfigureDisplayEnabled`. Feature availability is checked at runtime. Apple does not promise compatibility for these interfaces.
 

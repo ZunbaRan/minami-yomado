@@ -4,6 +4,21 @@ Generated with the built-in `image_gen` tool. These are original AI-generated co
 
 - `yomado-logo.png`: transparent primary logo, using a window-and-crescent symbol and a lowercase wordmark.
 - `yomado-usage.png`: usage illustration with the final lowercase logo.
+- `../../app/Resources/night-window.png`: the selected night-window application icon, with transparent exterior corners. `Yomado.icns` packages standard macOS sizes from this source via `bash scripts/build-icon.sh`.
+
+## Selected application icon prompt
+
+Selected from five independently generated concepts. Only the chosen concept is packaged in the application.
+
+```text
+Use case: logo-brand. Asset: one original macOS app icon concept for lowercase yomado, a software-only virtual display that keeps a graphical workspace available for visual computer-use agents when the physical monitor is off. Make a refined memorable icon, strong silhouette legible at 32 pixels, centered on an opaque rounded-square app tile, filling roughly 85% of a square image. Front-facing flat icon artwork with restrained material depth, precise geometry, generous inner breathing room. No words, letters, numbers, captions, watermark, presentation board, device mockup, photo, robots, eyes, circuit traces or decorative stars. The supplied conceptual direction is the sole central mark. This is an app icon, not a website illustration. Direction: Night window. A single distinctive upright window aperture of warm pale ivory light, set inside a deep midnight indigo tile. One subtly rounded upper corner and a small curved moon-shaped notch integrated into the window's upper inner corner make a recognizable custom silhouette. The luminous interior suggests a workspace still awake at night. Quiet, precise, elegant. Avoid literal desktop computers and busy window grid.
+```
+
+### Transparent exterior edit
+
+```text
+Use case: background-extraction. Edit target: the attached selected yomado macOS app icon, option 1 Night Window. Change ONLY the white exterior outside the deep midnight indigo rounded-square tile to genuine alpha transparency, keeping the tile, luminous cream moon-notched window mark, dimensions, framing, geometry, colors, texture and glow precisely unchanged. Keep all dark tile pixels opaque, including the moon-shaped notch, and all cream pixels opaque. Do not remove the dark background tile. No redesign, no sharpening, no added text, no white matte around edges. Output a square PNG with truly transparent exterior corners, suitable for packaging as a macOS .icns.
+```
 
 ## Logo prompt
 
