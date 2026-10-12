@@ -8,9 +8,9 @@
 
 给 Codex 一块虚拟屏，通过视觉操作 Blender、Marvelous Designer 等桌面软件，无需应用专用的 MCP 接口。
 
-[![点击观看中文演示：Blender 和 Marvelous Designer 位于 Codex 虚拟屏，两块实体屏保留自己的应用。](docs/media/yomado-zh-cn-poster.jpg)](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)
+[![点击观看中文演示：Blender 和 Marvelous Designer 位于 Codex 虚拟屏，两块实体屏保留自己的应用。](docs/media/yomado-zh-cn-poster.jpg)](https://chekusu.github.io/yomado/?lang=zh-CN)
 
-**[▶ 观看中文配音版](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)** · [English narration](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)
+**[▶ 观看中文配音版](https://chekusu.github.io/yomado/?lang=zh-CN)** · [English narration](https://chekusu.github.io/yomado/?lang=en)
 
 *60 秒产品功能模拟演示，点击封面播放。*
 

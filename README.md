@@ -8,9 +8,9 @@ A work screen for visual agents, designed to let physical screens rest.
 
 Give Codex a virtual screen for visual workflows in Blender, Marvelous Designer, and other desktop apps—without needing an app-specific MCP integration.
 
-[![Watch the English demo: Blender and Marvelous Designer on a Codex virtual screen beside two physical displays.](docs/media/yomado-en-poster.jpg)](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)
+[![Watch the English demo: Blender and Marvelous Designer on a Codex virtual screen beside two physical displays.](docs/media/yomado-en-poster.jpg)](https://chekusu.github.io/yomado/?lang=en)
 
-**[▶ Watch with English narration](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)** · [中文配音版](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)
+**[▶ Watch with English narration](https://chekusu.github.io/yomado/?lang=en)** · [中文配音版](https://chekusu.github.io/yomado/?lang=zh-CN)
 
 *60-second simulated product demo. Click the image to play.*
 
