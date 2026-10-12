@@ -22,6 +22,14 @@ yomado is built for **visual computer use**: Codex and other agents read screens
 
 These workflows still need a graphical desktop and a display surface for applications to render into. yomado provides a software virtual display for the windows an agent needs, with the goal of keeping those interfaces available while the Mac continues running and its physical monitors are off. Your existing agent tools handle screenshots, decisions, and input; yomado supplies the display. No hardware dummy plug or paid display utility is required.
 
+## Let your agent set it up
+
+You do not have to create a virtual screen or arrange its apps yourself. The included [yomado skill](skills/yomado/SKILL.md) guides a computer-use-capable agent through creating and naming a work screen, moving the task's windows into it, checking visual access, and returning them when finished.
+
+> Use $yomado to prepare a virtual screen named “Codex · Blender” for this task. Move only this task's windows, verify that you can see and operate them, and restore them when finished.
+
+For Codex, install the repository's `skills/yomado` folder in `$CODEX_HOME/skills` (default: `~/.codex/skills`); it is available from the next turn. Other agents can read the same `SKILL.md` using their skill mechanism. yomado and the agent's computer-use tools must be installed; you handle initial macOS permission grants. The skill uses the app's existing UI and shares the desktop's focus and input.
+
 ![yomado usage concept: two dark physical monitors, an awake Mac, and a virtual desktop on the right with 3D and garment-design windows.](docs/images/yomado-usage-night-window.png)
 
 *AI-generated usage illustration. Agent work belongs on the virtual display; operation with physical monitors off is still under validation.*

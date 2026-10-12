@@ -22,6 +22,14 @@ yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**�
 
 这类操作仍然需要图形桌面，以及供应用绘制界面、供 Agent 截图观察的显示表面。yomado 用纯软件为 Agent 所需窗口提供虚拟屏，目标是在 Mac 持续运行、实体显示器关闭之后，仍然保留可供 Agent 观察和操作的界面。截图、判断和键鼠输入由现有 Agent 工具完成，yomado 负责提供显示桌面，无需硬件显示器欺骗器或付费显示器软件。
 
+## 把准备工作也交给 Agent
+
+你不需要专门替 Agent 手动创建虚拟屏、安排应用。仓库附带的 [yomado skill](skills/yomado/SKILL.md)，指导具备电脑操作能力的 Agent 自行建屏、命名、移入本次任务的窗口、验证截图与操作，并在完成后把窗口恢复。
+
+> 用 $yomado 为这次 Blender 任务准备一块叫「Codex · Blender」的虚拟屏。只移入本任务的窗口，确认你能看到并操作它们，完成后恢复原位置。
+
+在 Codex 中，将仓库的 `skills/yomado` 文件夹安装到 `$CODEX_HOME/skills`（默认为 `~/.codex/skills`），下一轮对话即可使用；其他 Agent 可以通过自己的 skill 机制读取同一份 `SKILL.md`。需要先安装 yomado，并为 Agent 配备电脑操作工具；首次 macOS 系统授权由你完成。skill 使用现有应用界面，仍与当前桌面共用焦点和输入。
+
 ![yomado 使用示意：两台熄屏的实体显示器、保持运行的 Mac，以及右侧显示三维和服装设计窗口的虚拟桌面。](docs/images/yomado-usage-night-window.png)
 
 *AI 生成的使用示意：Agent 工作窗口位于虚拟屏；实体屏关闭后的实际操作仍待验证。*

@@ -1,0 +1,4 @@
+interface:
+  display_name: "yomado"
+  short_description: "Let your agent prepare and manage its work screen"
+  default_prompt: "Use $yomado to prepare a named virtual screen for this task and restore only the windows we move when finished."
