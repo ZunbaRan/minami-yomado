@@ -5,6 +5,38 @@ ym_root="$(cd "$(dirname "$0")" && pwd -P)"
 ym_dist="${YOMADO_OUTPUT_DIR:-$ym_root/dist}"
 ym_output="$ym_dist/Yomado.app"
 ym_icon="$ym_root/app/Resources/Yomado.icns"
+ym_signing_identity="${YOMADO_SIGNING_IDENTITY:-}"
+ym_signing_flags=(--force --sign -)
+
+# Local builds stay ad hoc signed. Distribution signing must be explicit;
+# never select a keychain identity or change its trust settings automatically.
+if [ -n "$ym_signing_identity" ]; then
+  if [ "$ym_signing_identity" = "-" ]; then
+    printf 'For an ad hoc build, leave YOMADO_SIGNING_IDENTITY unset.\n' >&2
+    exit 1
+  fi
+  ym_signing_flags=(--force --sign "$ym_signing_identity" --options runtime --timestamp)
+fi
+
+ym_verify_signature() {
+  /usr/bin/codesign --verify --strict "$1"
+  if [ -n "$ym_signing_identity" ]; then
+    local ym_signature
+    ym_signature="$(/usr/bin/codesign --display --verbose=4 "$1" 2>&1)"
+    case "$ym_signature" in
+      *"Authority=Developer ID Application:"*) ;;
+      *) printf 'Distribution signing requires a Developer ID Application certificate.\n' >&2; return 1 ;;
+    esac
+    case "$ym_signature" in
+      *"Timestamp="*) ;;
+      *) printf 'Distribution signature is missing a secure timestamp.\n' >&2; return 1 ;;
+    esac
+    case "$ym_signature" in
+      *"(runtime)"*) ;;
+      *) printf 'Distribution signature is missing the hardened runtime.\n' >&2; return 1 ;;
+    esac
+  fi
+}
 
 if [ ! -s "$ym_icon" ]; then
   printf 'Missing required app icon: app/Resources/Yomado.icns\n' >&2
@@ -37,7 +69,7 @@ ym_flags=(
 
 "$ym_clang" "${ym_flags[@]}" -I "$ym_root/bridge" \
   "$ym_root/app/Yomado.m" "$ym_root/app/ControlUI.m" "$ym_root/app/WindowRecovery.m" \
-  "$ym_root/app/UpdateChecker.m" \
+  "$ym_root/app/UpdateChecker.m" "$ym_root/app/MenuBarIcon.m" "$ym_root/app/PanelPresentation.m" \
   "$ym_root/app/AppWorkspace.m" "$ym_root/app/AppWorkspaceView.m" "$ym_root/bridge/VDVirtualDisplay.m" \
   -framework AppKit -framework CoreGraphics -framework IOKit -framework Carbon -framework ApplicationServices -framework QuartzCore \
   -o "$ym_bundle/Contents/MacOS/Yomado"
@@ -49,12 +81,13 @@ ym_flags=(
 /bin/cp -X "$ym_root/Info.plist" "$ym_bundle/Contents/Info.plist"
 /bin/cp -X "$ym_icon" "$ym_bundle/Contents/Resources/Yomado.icns"
 /usr/bin/xattr -cr "$ym_bundle"
-/usr/bin/codesign --force --sign - "$ym_bundle/Contents/MacOS/YomadoWatchdog"
-/usr/bin/codesign --force --sign - "$ym_bundle"
-/usr/bin/codesign --verify --strict "$ym_bundle/Contents/MacOS/YomadoWatchdog"
-/usr/bin/codesign --verify --strict "$ym_bundle"
+/usr/bin/codesign "${ym_signing_flags[@]}" "$ym_bundle/Contents/MacOS/YomadoWatchdog"
+/usr/bin/codesign "${ym_signing_flags[@]}" "$ym_bundle"
+ym_verify_signature "$ym_bundle/Contents/MacOS/YomadoWatchdog"
+ym_verify_signature "$ym_bundle"
 
-# Only generated artifacts in this repository's dist directory are replaced.
+# Only generated artifacts in the selected output directory are replaced.
+# Do not point YOMADO_OUTPUT_DIR at an installed or running app's directory.
 # Archive the verified staged bundle before destination metadata can be added.
 mkdir -p "$ym_dist"
 /usr/bin/ditto -c -k --norsrc --noextattr --keepParent \

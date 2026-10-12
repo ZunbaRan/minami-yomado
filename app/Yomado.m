@@ -12,6 +12,8 @@
 #import "AppWorkspace.h"
 #import "AppWorkspaceView.h"
 #import "UpdateChecker.h"
+#import "MenuBarIcon.h"
+#import "PanelPresentation.h"
 
 static NSString *YMAppVersion(void) {
     return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"—";
@@ -348,10 +350,7 @@ static NSView *YMSpacer(void) {
 - (void)buildMenu {
     if (self.previewMode) return;
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    NSImage *logo = YMBrandIcon();
-    logo.size = NSMakeSize(18, 18);
-    logo.template = NO;
-    self.statusItem.button.image = logo;
+    self.statusItem.button.image = YMMenuBarIcon();
     self.statusItem.button.imageScaling = NSImageScaleProportionallyDown;
     self.statusItem.button.toolTip = @"yomado · 夜窗";
     [self.statusItem.button setAccessibilityLabel:@"yomado · 夜窗"];
@@ -943,8 +942,13 @@ static NSView *YMSpacer(void) {
 - (void)showWindow:(id)sender {
     (void)sender;
     if (self.previewMode) return;
-    [NSApp activateIgnoringOtherApps:YES];
-    [self.window makeKeyAndOrderFront:nil];
+    YMPresentControlPanel(self.window);
+}
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)hasVisibleWindows {
+    (void)application;
+    (void)hasVisibleWindows;
+    [self showWindow:nil];
+    return NO;
 }
 - (BOOL)windowShouldClose:(NSWindow *)window { [window orderOut:nil]; return NO; }
 - (void)updateInventory {

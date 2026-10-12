@@ -2,7 +2,7 @@
 
 A work screen for visual agents, designed to let physical screens rest.
 
-[Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.2/Yomado-v0.3.2.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.2) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
+[Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.3/Yomado-v0.3.3.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.3) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
 ## Why yomado exists
 
@@ -54,9 +54,9 @@ dist/Yomado.zip
 
 The build script selects the active Xcode or Command Line Tools installation through `xcrun`. Set `YOMADO_DEVELOPER_DIR` to select another developer directory.
 
-The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.2), with a SHA-256 checksum. Intel binaries are not supplied.
+The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.3), with a SHA-256 checksum. Intel binaries are not supplied. The official v0.3.3 archive is signed by CHEKUSU INC. with Developer ID, notarized by Apple, and includes a stapled notarization ticket. Notarization is separate from Mac App Store review.
 
-Builds receive an **ad hoc signature**, not an Apple Developer ID signature or notarization. Follow your Mac's normal security policies when choosing whether to run a local build.
+Local builds receive an **ad hoc signature** by default. Setting `YOMADO_SIGNING_IDENTITY` explicitly enables Developer ID Application signing with the hardened runtime and secure timestamps for both the app and its recovery helper. This signing step does not submit the app for notarization. See the [website distribution process](docs/distribution.md) for signing, Apple notarization, stapling and release checks. A release is described as notarized only after Apple accepts that exact build and its final download passes verification. Follow your Mac's normal security policies when choosing whether to run a local build.
 
 ## Use the virtual display
 
@@ -78,7 +78,9 @@ Yomado does not change passwords, lock-screen policy, screen savers, or login se
 
 ## Version and updates
 
-The panel footer links to [yomado.app](https://yomado.app/), this GitHub repository and the MIT license, alongside the installed version. Click the refresh icon next to the version, or **Check for Updates…** (`检查更新…`) in the menu-bar menu. The menu-bar icon uses the same night-window logo as the app.
+The panel footer links to [yomado.app](https://yomado.app/), this GitHub repository and the MIT license, alongside the installed version. Click the refresh icon next to the version, or **Check for Updates…** (`检查更新…`) in the menu-bar menu. The menu bar uses a transparent, monochrome silhouette of the night-window logo that follows the system appearance; the full app icon keeps its dark background.
+
+Opening yomado again brings back its control panel, including after closing or minimizing it. Explicitly opening the panel recovers it onto a visible physical screen when one is available, without moving other apps or changing the display layout.
 
 Checking is manual: yomado queries the official GitHub releases list, including experimental prereleases, and offers a link to the newer release. Network errors are shown explicitly with a retry action. No account, telemetry or device identifiers are sent. Checking does not download, install, quit the app or change displays. To install a downloaded version, first save work and return apps from virtual displays, then quit the old copy and open the new one. Virtual displays are not retained across an app restart.
 
@@ -88,7 +90,7 @@ WeChat appears as an app icon inside its screen, alongside other applications. M
 
 If Accessibility permission is missing, a **lock icon** appears in the header and window movement is disabled. Click that icon to open the relevant page under **Privacy & Security**, then enable yomado yourself. This page is called **Accessibility** on earlier macOS versions, and **Device Control & Data Access** on macOS 27. If yomado is absent from the list, use **+** to select the app. The panel detects the updated permission automatically and hides the lock icon when access is granted. Permission is requested only when you click the icon; opening the settings page does not grant it.
 
-Local builds are ad hoc signed. After rebuilding, macOS may retain a permission record tied to an older signature even though its switch appears enabled. If the lock icon remains after reopening the app, remove the old yomado entry in System Settings, add the current app with **+**, and enable it again. yomado does not reset or edit system permission records itself.
+Local builds are ad hoc signed by default. After rebuilding, macOS may retain a permission record tied to an older signature even though its switch appears enabled. If the lock icon remains after reopening the app, remove the old yomado entry in System Settings, add the current app with **+**, and enable it again. yomado does not reset or edit system permission records itself.
 
 While that move is pending, a limited check can recognize supported security/login dialogs and return WeChat to its physical screen without clicking the prompt. Ordinary chat-window contents are never scanned. Some WeChat versions do not expose those dialogs in a recognizable form; automatic return is not guaranteed, so keep the manual return action available. An automatic failure pauses further attempts. Stopping or quitting yomado is held if a pending WeChat return fails.
 
@@ -114,7 +116,7 @@ A read-only interface and display inventory check:
 
 Physical display serial numbers are redacted by default. The optional `--include-device-identifiers` flag includes them for local diagnosis. Inventory output still describes your display setup; inspect and sanitize it before sharing.
 
-The build script compiles, ad hoc signs, and strictly verifies the staged bundle. It does **not** launch the app or run display tests.
+The build script compiles, signs, and strictly verifies the staged bundle. The default signature is ad hoc; Developer ID signing requires an explicit `YOMADO_SIGNING_IDENTITY`. It does **not** launch the app or run display tests.
 
 Pure policy tests can run without creating a display or opening an application:
 

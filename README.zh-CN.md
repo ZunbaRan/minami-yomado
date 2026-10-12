@@ -39,9 +39,9 @@ yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**�
 
 ## 下载
 
-[下载 Apple Silicon 应用](https://github.com/chekusu/yomado/releases/download/v0.3.2/Yomado-v0.3.2.zip) · [版本说明](https://github.com/chekusu/yomado/releases/tag/v0.3.2)
+[下载 Apple Silicon 应用](https://github.com/chekusu/yomado/releases/download/v0.3.3/Yomado-v0.3.3.zip) · [版本说明](https://github.com/chekusu/yomado/releases/tag/v0.3.3)
 
-这是使用 ad hoc 签名的实验版本，尚未进行 Apple Developer ID 签名与公证。
+官方 v0.3.3 下载包已由 CHEKUSU INC. 使用 Developer ID 签名，并通过 Apple 公证、附带公证票据。它仍是使用私有 API 的实验版本；Apple 公证不等同于 Mac App Store 上架。
 
 ## 编译
 
@@ -60,9 +60,9 @@ dist/Yomado.zip
 
 构建脚本通过 `xcrun` 使用当前 Xcode 或 Command Line Tools，也可以设置 `YOMADO_DEVELOPER_DIR` 选择其他开发工具目录。
 
-目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。[GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.2) 提供实验性的 Apple Silicon 应用和 SHA-256 校验值，暂不提供 Intel 版本。
+目前验证过 Apple Silicon 原生构建。macOS 14 部署目标只是编译设置，不代表所有 macOS 14 及以上系统、或 Intel Mac 均已兼容。[GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.3) 提供实验性的 Apple Silicon 应用和 SHA-256 校验值，暂不提供 Intel 版本。
 
-构建产物仅做 **ad hoc 签名**，没有 Apple Developer ID 签名或公证。是否运行本地构建，请遵循自己 Mac 的正常安全策略。
+本地构建默认使用 **ad hoc 签名**。显式设置 `YOMADO_SIGNING_IDENTITY` 后，脚本会为应用和恢复进程使用 Developer ID Application 签名、强化运行时及安全时间戳；此步骤不会自动提交 Apple 公证。[官网分发流程](docs/distribution.md) 说明签名、公证、附加公证票据及发布验证。只有 Apple 接受该构建、最终下载包也通过验证后，才会将该版本标记为已公证。是否运行本地构建，请遵循自己 Mac 的正常安全策略。
 
 ## 使用虚拟屏
 
@@ -84,7 +84,9 @@ Yomado 不修改密码、锁屏策略、屏保或登录设置；保持唤醒的�
 
 ## 版本与检查更新
 
-面板底部显示当前版本，并提供 [yomado.app](https://yomado.app/)、GitHub 源码和 MIT 协议入口。点击版本旁的刷新图标，或菜单栏菜单中的「检查更新…」。菜单栏使用与应用一致的夜窗 logo。
+面板底部显示当前版本，并提供 [yomado.app](https://yomado.app/)、GitHub 源码和 MIT 协议入口。点击版本旁的刷新图标，或菜单栏菜单中的「检查更新…」。菜单栏只保留夜窗 logo 的窗子轮廓，背景透明、颜色跟随系统外观；应用图标仍保留完整深色底图。
+
+关闭或最小化控制面板后，重新打开 yomado 会唤回面板。明确打开面板时，如果有可用实体屏，会把落在虚拟屏或屏幕范围外的面板恢复到实体屏，只调整控制面板本身，不移动其他应用或修改屏幕排列。
 
 检查由你手动发起：yomado 读取官方 GitHub Releases，包含当前的实验预发布版本，发现新版后提供版本页面入口。网络失败会明确提示并支持重试，不会误报为已是最新。无需账号，不发送设备标识或遥测数据。检查不会自动下载、安装、退出或调整显示器。安装下载的新版本前，请先保存工作、把应用从虚拟屏返回，再退出旧版并打开新版；重启应用不会保留运行中的虚拟屏。
 
@@ -94,7 +96,7 @@ Yomado 不修改密码、锁屏策略、屏保或登录设置；保持唤醒的�
 
 未开启辅助功能权限时，标题区域会出现**锁形图标**，应用图标拖放暂不可用。点击锁形图标可直接进入「隐私与安全」下的对应页面，再由你开启 yomado 开关。旧系统称为「辅助功能」，macOS 27 称为「设备控制和数据访问」。列表中没有该应用时，点「＋」选择应用。授权后，面板会自动识别并收起锁形图标。只有点击该图标才会请求权限，打开设置页面本身不会完成授权。
 
-本地构建使用 ad hoc 签名。重新编译后，系统可能仍保留绑定旧签名的权限记录，开关显示开启也未必对新构建生效。重新打开应用后仍显示锁形图标时，请在系统设置中移除旧 yomado 记录，再用「＋」添加当前应用并开启。yomado 不会自行重置或修改系统权限记录。
+本地构建默认使用 ad hoc 签名。重新编译后，系统可能仍保留绑定旧签名的权限记录，开关显示开启也未必对新构建生效。重新打开应用后仍显示锁形图标时，请在系统设置中移除旧 yomado 记录，再用「＋」添加当前应用并开启。yomado 不会自行重置或修改系统权限记录。
 
 移屏后，软件会有限度检查受支持的登录或安全对话框，识别成功就把微信送回实体屏，不会点击提示。普通聊天窗口的内容不会被扫描。部分微信版本没有提供可识别的对话框标记，因此不能保证自动返回，仍需保留手动恢复入口。自动恢复失败后会暂停后续尝试；如果还有待恢复的微信窗口且恢复失败，停止或退出 yomado 会被阻止。
 
@@ -120,7 +122,7 @@ Yomado 不修改密码、锁屏策略、屏保或登录设置；保持唤醒的�
 
 默认隐藏实体显示器序列号。需要本地诊断时，可加 `--include-device-identifiers` 参数将其包含在输出中。清单仍会描述你的显示配置，分享前应检查并清理。
 
-构建脚本编译应用、进行 ad hoc 签名，并严格验证临时构建中的应用包，**不会**启动应用或运行显示器测试。
+构建脚本编译、签名并严格验证临时构建中的应用包，**不会**启动应用或运行显示器测试。默认使用 ad hoc 签名；Developer ID 签名需要显式设置 `YOMADO_SIGNING_IDENTITY`。
 
 以下纯策略测试不会创建显示器或打开应用：
 
