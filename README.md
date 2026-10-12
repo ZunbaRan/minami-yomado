@@ -12,9 +12,9 @@ Give Codex a virtual screen for visual workflows in Blender, Marvelous Designer,
 
 [![Watch the English demo: Blender and Marvelous Designer on a Codex virtual screen beside two physical displays.](docs/media/yomado-en-poster.jpg)](https://chekusu.github.io/yomado/?lang=en)
 
-**[▶ Watch with English narration](https://chekusu.github.io/yomado/?lang=en)** · [中文配音版](https://chekusu.github.io/yomado/?lang=zh-CN)
+**[▶ Watch with subtitles · 16 languages](https://chekusu.github.io/yomado/?lang=en)** · [English captioned MP4](https://yomado.app/media/captioned/yomado-film-en-wide-c1.mp4) · [中文字幕 MP4](https://yomado.app/media/captioned/yomado-film-zh-CN-wide-c1.mp4) · [Watch on yomado.app](https://yomado.app/watch/)
 
-*60-second simulated product demo. Click the image to play.*
+*60-second simulated demo with 16 subtitle languages and captioned landscape/portrait downloads. Chinese subtitles use River's Chinese narration; other subtitles use River's English narration.*
 
 ## Why yomado exists
 

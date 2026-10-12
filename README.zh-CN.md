@@ -12,9 +12,9 @@
 
 [![点击观看中文演示：Blender 和 Marvelous Designer 位于 Codex 虚拟屏，两块实体屏保留自己的应用。](docs/media/yomado-zh-cn-poster.jpg)](https://chekusu.github.io/yomado/?lang=zh-CN)
 
-**[▶ 观看中文配音版](https://chekusu.github.io/yomado/?lang=zh-CN)** · [English narration](https://chekusu.github.io/yomado/?lang=en)
+**[▶ 观看字幕版 · 支持 16 种语言](https://chekusu.github.io/yomado/?lang=zh-CN)** · [中文字幕 MP4](https://yomado.app/media/captioned/yomado-film-zh-CN-wide-c1.mp4) · [English captioned MP4](https://yomado.app/media/captioned/yomado-film-en-wide-c1.mp4) · [在官网观看](https://yomado.app/zh-cn/watch/)
 
-*60 秒产品功能模拟演示，点击封面播放。*
+*60 秒产品功能模拟演示，支持 16 种字幕及横竖版带字幕下载。简繁字幕配 River 中文旁白，其余字幕配 River 英文旁白。*
 
 ## 为什么需要 yomado
 
