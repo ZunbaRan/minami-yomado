@@ -1,3 +1,5 @@
+<img src="docs/images/yomado-logo.png" alt="yomado night-window icon" width="64" align="right" />
+
 # yomado · 夜窗
 
 A work screen for visual agents, designed to let physical screens rest.

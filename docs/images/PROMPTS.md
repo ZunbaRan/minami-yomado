@@ -2,9 +2,11 @@
 
 Generated with the built-in `image_gen` tool. These are original AI-generated concept illustrations, not screenshots of a local desktop or evidence of tested monitor-off operation.
 
-- `yomado-logo.png`: transparent primary logo, using a window-and-crescent symbol and a lowercase wordmark.
-- `yomado-usage.png`: usage illustration with the final lowercase logo.
-- `../../app/Resources/night-window.png`: the selected night-window application icon, with transparent exterior corners. `Yomado.icns` packages standard macOS sizes from this source via `bash scripts/build-icon.sh`.
+- `yomado-logo.png`: the selected night-window app icon, identical to `../../app/Resources/night-window.png`; the outer corners are transparent, while the deep navy tile stays opaque.
+- `yomado-usage.png`: the usage illustration updated with the selected night-window icon and the existing lowercase wordmark.
+- `../../app/Resources/night-window.png`: the canonical application icon. `Yomado.icns` packages standard macOS sizes from this source via `bash scripts/build-icon.sh`.
+
+The old cyan four-pane window identity has been replaced in the published assets. Both language READMEs use the same current brand images; their narrated demo videos remain at the beginning.
 
 ## Selected application icon prompt
 
@@ -20,22 +22,9 @@ Use case: logo-brand. Asset: one original macOS app icon concept for lowercase y
 Use case: background-extraction. Edit target: the attached selected yomado macOS app icon, option 1 Night Window. Change ONLY the white exterior outside the deep midnight indigo rounded-square tile to genuine alpha transparency, keeping the tile, luminous cream moon-notched window mark, dimensions, framing, geometry, colors, texture and glow precisely unchanged. Keep all dark tile pixels opaque, including the moon-shaped notch, and all cream pixels opaque. Do not remove the dark background tile. No redesign, no sharpening, no added text, no white matte around edges. Output a square PNG with truly transparent exterior corners, suitable for packaging as a macOS .icns.
 ```
 
-## Logo prompt
+## Original usage illustration prompt
 
-```text
-Use case: logo-brand
-Asset type: reusable primary logo lockup for an open-source macOS utility; horizontal 3:1 composition with a truly transparent background.
-Primary request: Design a considered, distinctive logo for "yomado", a virtual workspace for graphical agents. The Japanese-inspired name evokes a window lit at night. Create ONE finished logo, not a presentation of alternatives.
-Design: At the left, a compact geometric symbol combining a softly rounded window frame with a crescent-shaped negative-space aperture, suggesting a night window that remains available. The symbol must read at small app-icon scale, using a bold continuous silhouette and one clear cutout, with balanced optical weight. Subtly echo the branching rhythm of a lowercase y in the negative space only if it improves the simple mark. No monitor stand. At the right, a bespoke lowercase wordmark with humanist geometric letterforms, refined spacing, distinctive rounded y descender, open counters and calm proportions. It should feel like a crafted developer-tool identity, not plain text typed in a default font.
-Text (verbatim): "yomado". ALL SIX LETTERS LOWERCASE. Never capitalize the initial y.
-Color: very dark ink navy wordmark with a restrained cyan-blue window symbol. Flat colors, minimal, crisp solid vector-like edges. No gradients, glow, shadows or 3D.
-Composition: single horizontal icon + wordmark lockup, icon height balanced with lowercase letterforms and descender, generous transparent margin, polished optical alignment. The brand name is the main visual element.
-Constraints: transparent alpha background, no background rectangle, no tagline, no extra words or captions, no watermark, no robot, no stars/sparkles, no generic AI brain or circuit icon, no stock-looking monitor icon. Clean and reproducible, original visual identity.
-```
-
-## Usage illustration prompt
-
-The initial composition was generated with this prompt. The title was subsequently replaced with the lowercase logo using the edit prompt below.
+The initial composition was generated with this prompt. Its original title was later changed to lowercase, and the selected night-window icon was applied with the final edit below.
 
 ```text
 Use case: illustration-story
@@ -48,16 +37,10 @@ Text (verbatim): top-left headline "Yomado", subtitle below "A virtual workspace
 Constraints: This is a usage CONCEPT, not proof of a successful test. No separate OS or security sandbox imagery, no shield, no isolated mouse/keyboard implication. No people, robot mascot, phone, clouds, extra hardware, watermarks, power savings percentages, fake app status badges or claims. No real screenshots, usernames, email, local file paths, project names or machine identifiers. Do not add a third physical monitor. Make the picture visually appealing and the main physical-versus-virtual relationship instantly legible.
 ```
 
-## Final usage illustration edit prompt
+## Current usage illustration edit (2026-10-13)
 
-Reference 1: the initial concept illustration. Reference 2: `yomado-logo.png`.
+Built-in image generation edit. Reference 1: the previous usage illustration. Reference 2: `../../app/Resources/night-window.png`. Only the upper-left symbol was replaced; the scene and lowercase wordmark were preserved.
 
 ```text
-Use case: compositing
-Asset type: final GitHub README usage illustration.
-Input images: Image 1 is the edit target, the full Yomado usage concept illustration. Image 2 is the exact approved-design reference for the newly designed lowercase yomado window-and-crescent logo.
-Primary request: Replace ONLY the large top-left "Yomado" headline in Image 1 with the logo lockup from Image 2. Preserve the custom window-and-crescent symbol, wordmark letter shapes, lowercase y and all six letters exactly "yomado". For contrast on the dark scene, make the wordmark soft white and keep the symbol cyan-blue. Size it elegantly into the existing upper-left brand area, aligned with the subtitle, without crowding the subtitle or touching the physical monitors. Do not make the logo taller than the original title area.
-Invariants: keep Image 1's original wide aspect ratio, scene, two switched-off physical monitors together on the left, awake silver Mac, floating virtual workspace on the right, garment images, cursor, lighting, labels, readable subtitle and tiny "Concept illustration" footer. Keep the virtual display to the right of both physical monitors. Do not add more devices or change the scene.
-Text: brand logo must read "yomado" all lowercase. Existing subtitle remains "A virtual workspace for graphical agents". Retain all other existing labels as in Image 1.
-Constraints: This remains a concept illustration, not an operational screenshot. No uppercase brand name, no added captions or watermark, no added independent OS/sandbox symbols. The logo should look intentionally typeset and naturally integrated, not like a dark rectangle pasted over the original. Remove the old title cleanly.
+Use case: precise-object-edit. Edit target is image 1, the existing wide yomado README product usage illustration. Image 2 is the authoritative new app icon to insert; it is not a new illustration style. Change ONLY the obsolete bright blue four-pane window/crescent icon at the upper left of image 1 to the EXACT new app icon from image 2: a dark navy rounded square containing a warm ivory glowing single upright window shape with a rounded top-left, rounded lower corners, and a deep circular moon-shaped notch cut from its upper-right. Preserve that icon silhouette and colors accurately, no four panes and no extra moon symbol. Place it at the same size and position as the obsolete icon, with its full dark navy rounded-square background. Keep the lowercase white 'yomado' wordmark to its right unchanged. Preserve the entire original scene and composition: nighttime workspace, both dark physical monitors, warm desk lamp, Mac Studio, virtual display on the right with two stylized Blender/garment-design windows and jackets, all labels, typography, blue dotted frame, cursor, foreground chair and right-bottom 'Concept illustration'. Preserve original landscape aspect ratio and detail. Do not redesign or introduce new words, do not add logos elsewhere. High fidelity surgical brand update for an existing published README illustration. Output one final edited wide illustration.
 ```

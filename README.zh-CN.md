@@ -1,3 +1,5 @@
+<img src="docs/images/yomado-logo.png" alt="yomado 夜窗图标" width="64" align="right" />
+
 # yomado · 夜窗
 
 为视觉 Agent 留一块工作屏，让实体屏可以休息。
