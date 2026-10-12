@@ -4,6 +4,16 @@ A work screen for visual agents, designed to let physical screens rest.
 
 [Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.3/Yomado-v0.3.3.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.3) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
+## See yomado in 60 seconds
+
+Give Codex a virtual screen for visual workflows in Blender, Marvelous Designer, and other desktop apps—without needing an app-specific MCP integration.
+
+[![Watch the English demo: Blender and Marvelous Designer on a Codex virtual screen beside two physical displays.](docs/media/yomado-en-poster.jpg)](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)
+
+**[▶ Watch with English narration](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)** · [中文配音版](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)
+
+*60-second simulated product demo. Click the image to play.*
+
 ## Why yomado exists
 
 yomado is built for **visual computer use**: Codex and other agents read screenshots, interpret the interface, and use the mouse and keyboard to operate desktop applications directly, without requiring an application-specific MCP integration. This matters for applications such as Marvelous Designer and Blender, especially when a workflow has no suitable MCP interface or needs interaction with a visible viewport, menu, or dialog.

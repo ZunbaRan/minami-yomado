@@ -4,6 +4,16 @@
 
 [官方网站](https://yomado.app/) · [English](README.md) · [MIT 许可证](LICENSE)
 
+## 60 秒看懂 yomado
+
+给 Codex 一块虚拟屏，通过视觉操作 Blender、Marvelous Designer 等桌面软件，无需应用专用的 MCP 接口。
+
+[![点击观看中文演示：Blender 和 Marvelous Designer 位于 Codex 虚拟屏，两块实体屏保留自己的应用。](docs/media/yomado-zh-cn-poster.jpg)](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)
+
+**[▶ 观看中文配音版](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-zh-cn-river.mp4)** · [English narration](https://raw.githubusercontent.com/chekusu/yomado/main/docs/media/yomado-en-river.mp4)
+
+*60 秒产品功能模拟演示，点击封面播放。*
+
 ## 为什么需要 yomado
 
 yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**：看截图、理解界面，再用鼠标和键盘直接操作桌面软件，不必依赖应用专用的 MCP 接口。Marvelous Designer、Blender 等软件就有这样的使用场景，尤其是缺少合适 MCP 接口，或需要直接操作三维视图、菜单、对话框的工作流程。
