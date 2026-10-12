@@ -22,7 +22,7 @@ yomado 主要是为了支持 **Codex 或其他 Agent 通过视觉操作电脑**�
 
 这类操作仍然需要图形桌面，以及供应用绘制界面、供 Agent 截图观察的显示表面。yomado 用纯软件为 Agent 所需窗口提供虚拟屏，目标是在 Mac 持续运行、实体显示器关闭之后，仍然保留可供 Agent 观察和操作的界面。截图、判断和键鼠输入由现有 Agent 工具完成，yomado 负责提供显示桌面，无需硬件显示器欺骗器或付费显示器软件。
 
-![yomado 使用示意：两台熄屏的实体显示器、保持运行的 Mac，以及右侧显示三维和服装设计窗口的虚拟桌面。](docs/images/yomado-usage.png?v=night-window-20261013)
+![yomado 使用示意：两台熄屏的实体显示器、保持运行的 Mac，以及右侧显示三维和服装设计窗口的虚拟桌面。](docs/images/yomado-usage-night-window.png)
 
 *AI 生成的使用示意：Agent 工作窗口位于虚拟屏；实体屏关闭后的实际操作仍待验证。*
 
