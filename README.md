@@ -1,4 +1,4 @@
-<img src="docs/images/yomado-logo.png" alt="yomado night-window icon" width="64" align="right" />
+<img src="docs/images/yomado-logo.png?v=night-window-20261013" alt="yomado night-window icon" width="64" align="right" />
 
 # yomado · 夜窗
 
@@ -22,7 +22,7 @@ yomado is built for **visual computer use**: Codex and other agents read screens
 
 These workflows still need a graphical desktop and a display surface for applications to render into. yomado provides a software virtual display for the windows an agent needs, with the goal of keeping those interfaces available while the Mac continues running and its physical monitors are off. Your existing agent tools handle screenshots, decisions, and input; yomado supplies the display. No hardware dummy plug or paid display utility is required.
 
-![yomado usage concept: two dark physical monitors, an awake Mac, and a virtual desktop on the right with 3D and garment-design windows.](docs/images/yomado-usage.png)
+![yomado usage concept: two dark physical monitors, an awake Mac, and a virtual desktop on the right with 3D and garment-design windows.](docs/images/yomado-usage.png?v=night-window-20261013)
 
 *AI-generated usage illustration. Agent work belongs on the virtual display; operation with physical monitors off is still under validation.*
 
