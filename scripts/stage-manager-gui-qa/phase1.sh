@@ -23,10 +23,11 @@ if "$ym_qa_helpers/observe" pid dev.chekusu.yomado > "$ym_qa_evidence/preexistin
 fi
 ym_qa_yomado_pid=""
 ym_qa_companion_pid=""
+ym_qa_reference_pid=""
 ym_qa_observer_pid=""
 ym_qa_cleanup() {
   # All PIDs were started by this one run; never kill all instances by name.
-  for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid"; do
+  for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid" "$ym_qa_reference_pid"; do
     if [[ -n "$ym_qa_pid" ]] && kill -0 "$ym_qa_pid" 2>/dev/null; then kill -TERM "$ym_qa_pid" 2>/dev/null || true; fi
   done
 }
@@ -67,6 +68,23 @@ YM_QA_CONTROL_DIRECTORY="$ym_qa_evidence/control" \
 ym_qa_companion_pid=$!
 sleep 3
 ym_qa_capture 01-companion-front
+
+# A second independent regular app is a positive control for Stage Manager
+# itself. Both binaries use separate bundle IDs and separately owned windows.
+# If ordinary apps do not separate, the accessory-app A/B cannot prove its fix.
+mkdir -p "$ym_qa_evidence/reference-control"
+YM_QA_CONTROL_DIRECTORY="$ym_qa_evidence/reference-control" \
+  "$ym_qa_helpers/Reference.app/Contents/MacOS/Companion" > "$ym_qa_evidence/reference.jsonl" 2> "$ym_qa_evidence/reference.stderr" &
+ym_qa_reference_pid=$!
+sleep 3
+ym_qa_capture 01a-reference-front-positive-control
+ym_qa_companion_command show
+sleep 3
+ym_qa_capture 01b-companion-front-positive-control
+kill -TERM "$ym_qa_reference_pid"
+wait "$ym_qa_reference_pid" || true
+ym_qa_reference_pid=""
+sleep 1
 
 ym_qa_stop_file="$ym_qa_evidence/control/dock-observer.stop"
 /bin/rm -f "$ym_qa_stop_file"
@@ -142,11 +160,14 @@ ym_qa_capture 10-mission-control
 sleep 1
 ym_qa_capture 11-final
 
+/bin/bash "$ym_qa_source/desktop-scenarios.sh" "$ym_qa_app" "$ym_qa_helpers" \
+  "$ym_qa_evidence/desktops" "$ym_qa_yomado_pid"
+
 # If the safety cap expired before the final capture, coverage is incomplete.
 kill -0 "$ym_qa_observer_pid"
 /usr/bin/touch "$ym_qa_stop_file"
 wait "$ym_qa_observer_pid"
 ym_qa_observer_pid=""
 
-printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"not-yet-tested","dockSampling":"ready before LaunchServices launch; stop requested after final screenshot; compare monotonic sample start/end and final snapshot timestamps; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
+printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"requires-review-of-desktops-evidence","dockSampling":"ready before LaunchServices launch; stop requested after final Desktop screenshot; compare monotonic sample start/end and final snapshot timestamps; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
   "$ym_qa_variant" "$ym_qa_stage_manager" > "$ym_qa_evidence/collection-status.json"

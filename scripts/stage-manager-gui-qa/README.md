@@ -32,6 +32,12 @@ paired with one recognizable regular application that owns only its own
 temporary window. The harness closes and reopens the production panel,
 minimizes and reopens it, and requests the panel from the companion's native
 full-screen Space. Closing the panel is checked to leave its process alive.
+Before the production launch, a second separately identified regular app
+(`QA Reference`, blue window) is activated and then `QA Companion` (red window)
+is reactivated. These screenshots establish whether Stage Manager separates
+ordinary apps at all. The real AppKit fixture also logs
+`NSScreen.screensHaveSeparateSpaces` and its active state, avoiding reliance
+on a command-line-only screen query. Reference is terminated after this check.
 
 Evidence includes full desktop screenshots from the empty runner; CGWindow
 metadata and AX trees are restricted to these two apps. A Dock observer checks
@@ -71,14 +77,16 @@ thumbnail when the head panel opens, compared with base; corroborate with
 window bounds and actual system UI. A screenshot must show Stage Manager
 actually operating before this can pass.
 
-Two ordinary Desktops still need a Mission Control test: create Desktop 2 in
-the runner's inspected native UI, keep the companion there, request the
-existing Yomado panel, record which desktop becomes active, and verify that
-the panel is accessible. Test closing and reopening on Desktop 2 as well.
-The native full-screen phase does not substitute for this ordinary Desktop
-test. Any failed or unavailable scenario stays pending, and does not authorize
-a merge. Manual grouping should also be inspected separately if macOS grouping
-controls are available in the runner.
+The ordinary Desktop phase uses the previously observed native Mission Control
+identifiers `mc.spaces.add` and `mc.spaces.list`. It revalidates the current
+tree, enabled state and AXPress action, requires exactly one initial Desktop,
+creates a second, and selects it from the actual AX list. It requests the
+existing panel from Desktop 2, then closes the panel and requests it again
+from Desktop 2. Screenshots and a Mission Control capture distinguish returning
+to the existing panel's Desktop from moving the panel. No guessed coordinates
+or private Space-changing APIs are used. This remains evidence for review,
+not an automatic merge approval. Manual grouping should also be inspected
+separately if macOS grouping controls are available in the runner.
 
 Do not upload unrelated user data, runner credentials, environment dumps,
 app profiles, or local paths. Before publication review screenshots and logs;

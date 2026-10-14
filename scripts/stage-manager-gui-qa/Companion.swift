@@ -21,15 +21,18 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     var lastCommand = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let reference = Bundle.main.bundleIdentifier == "org.yomado.qa.Reference"
         window = NSWindow(contentRect: NSRect(x: 160, y: 180, width: 640, height: 440),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "YOMADO QA COMPANION"
+        window.title = reference ? "YOMADO QA REFERENCE" : "YOMADO QA COMPANION"
         window.collectionBehavior = [.primary, .fullScreenPrimary]
-        window.backgroundColor = NSColor(calibratedRed: 0.42, green: 0.08, blue: 0.13, alpha: 1)
+        window.backgroundColor = reference
+            ? NSColor(calibratedRed: 0.06, green: 0.18, blue: 0.48, alpha: 1)
+            : NSColor(calibratedRed: 0.42, green: 0.08, blue: 0.13, alpha: 1)
         window.delegate = self
         window.isReleasedWhenClosed = false
-        let title = NSTextField(labelWithString: "COMPANION\nSeparate regular application\nStage Manager fixture")
+        let title = NSTextField(labelWithString: "\(reference ? "REFERENCE" : "COMPANION")\nSeparate regular application\nStage Manager fixture")
         title.font = NSFont.systemFont(ofSize: 30, weight: .semibold)
         title.textColor = .white
         title.alignment = .center
@@ -53,6 +56,9 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         let object: [String: Any] = ["event": event,
             "timestamp": ISO8601DateFormatter().string(from: Date()),
             "windowNumber": window.windowNumber,
+            "bundleIdentifier": Bundle.main.bundleIdentifier ?? "unknown",
+            "appActive": NSApp.isActive,
+            "screensHaveSeparateSpaces": NSScreen.screensHaveSeparateSpaces,
             "visible": window.isVisible,
             "fullScreen": window.styleMask.contains(.fullScreen),
             "frame": NSStringFromRect(window.frame)]

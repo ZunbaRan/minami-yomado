@@ -6,7 +6,7 @@ guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
     fputs("REFUSED: disposable hosted runner only\n", stderr)
     exit(64)
 }
-let ownedBundleIDs = ["dev.chekusu.yomado", "org.yomado.qa.Companion"]
+let ownedBundleIDs = ["dev.chekusu.yomado", "org.yomado.qa.Companion", "org.yomado.qa.Reference"]
 
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var result: CFTypeRef?
@@ -29,7 +29,7 @@ func tree(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any
     for name in [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, "AXIdentifier"] {
         if let value = stringAttribute(element, name) { result[name] = value }
     }
-    for name in [kAXFocusedAttribute, kAXMainAttribute, kAXMinimizedAttribute, "AXFullScreen", kAXEnabledAttribute] {
+    for name in [kAXFocusedAttribute, kAXMainAttribute, kAXMinimizedAttribute, "AXFullScreen", kAXEnabledAttribute, kAXValueAttribute] {
         if let value = attribute(element, name) as? NSNumber { result[name] = value }
     }
     for name in [kAXPositionAttribute, kAXSizeAttribute] {
@@ -137,6 +137,10 @@ func applicationRecord(_ app: NSRunningApplication, includeTree: Bool) -> [Strin
         var budget = 500
         let element = AXUIElementCreateApplication(pid)
         result["axWindows"] = elements(element, kAXWindowsAttribute).map { tree($0, depth: 6, budget: &budget) }
+        var menuBudget = 180
+        result["axMenuBars"] = elements(element, kAXChildrenAttribute).filter {
+            stringAttribute($0, kAXRoleAttribute) == kAXMenuBarRole
+        }.map { tree($0, depth: 5, budget: &menuBudget) }
     }
     return result
 }
