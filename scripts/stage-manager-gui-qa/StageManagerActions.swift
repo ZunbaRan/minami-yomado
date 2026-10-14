@@ -9,13 +9,13 @@ func attr(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
     guard AXUIElementCopyAttributeValue(node, name as CFString, &result) == .success else { return nil }
     return result
 }
-func match(_ root: AXUIElement, role: String, description: String) -> AXUIElement? {
+func match(_ root: AXUIElement, role: String, description: String, attribute: String = kAXDescriptionAttribute) -> AXUIElement? {
     var pending = [(root, 0)], found: [AXUIElement] = [], visited = 0
     while let (node, depth) = pending.popLast() {
         visited += 1
         if visited > 1600 || depth > 14 { fail("incomplete AX traversal") }
         if attr(node, kAXRoleAttribute) as? String == role,
-           attr(node, kAXDescriptionAttribute) as? String == description { found.append(node) }
+           attr(node, attribute) as? String == description { found.append(node) }
         pending += ((attr(node, kAXChildrenAttribute) as? [AXUIElement]) ?? []).map { ($0, depth+1) }
     }
     if found.count > 1 { fail("ambiguous control") }
@@ -24,6 +24,30 @@ func match(_ root: AXUIElement, role: String, description: String) -> AXUIElemen
 func press(_ node: AXUIElement) {
     guard (attr(node, kAXEnabledAttribute) as? NSNumber)?.boolValue != false,
           AXUIElementPerformAction(node, kAXPressAction as CFString) == .success else { fail("AXPress failed") }
+}
+if CommandLine.arguments.last == "finish-onboarding" {
+    guard let manager = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.WindowManager").first else { fail("Window Manager absent") }
+    let managerRoot = AXUIElementCreateApplication(manager.processIdentifier)
+    // This exact system-owned title/button was visible in the previous CI
+    // screenshots; re-read it and use its native accessibility action.
+    func onboardingButton() -> AXUIElement? {
+        match(managerRoot, role: kAXButtonRole, description: "Turn On Stage Manager", attribute: kAXTitleAttribute)
+            ?? match(managerRoot, role: kAXButtonRole, description: "Turn On Stage Manager")
+    }
+    manager.activate(options: [])
+    Thread.sleep(forTimeInterval: 1)
+    var candidate: AXUIElement?
+    for _ in 0..<20 {
+        if let button = onboardingButton(),
+           (attr(button, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { candidate = button; break }
+        Thread.sleep(forTimeInterval: 0.25)
+    }
+    guard let button = candidate else { fail("observed Turn On Stage Manager button unavailable or disabled") }
+    press(button); Thread.sleep(forTimeInterval: 2)
+    if onboardingButton() != nil {
+        fail("onboarding window remains after native action")
+    }
+    print("Completed observed Stage Manager onboarding with native AXPress"); exit(0)
 }
 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.controlcenter").first,
       AXIsProcessTrusted() else { fail("Control Center or AX unavailable") }

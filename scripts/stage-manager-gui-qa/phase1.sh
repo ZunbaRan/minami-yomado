@@ -42,6 +42,13 @@ ym_qa_companion_command() {
   printf '{"nonce":"%s","command":"%s"}\n' "$(/usr/bin/uuidgen)" "$command" > "$ym_qa_evidence/control/command.tmp"
   /bin/mv "$ym_qa_evidence/control/command.tmp" "$ym_qa_evidence/control/command.json"
 }
+ym_qa_panel_menu() {
+  local label="$1"
+  "$ym_qa_helpers/panel-menu-actions" "$ym_qa_yomado_pid" open > "$ym_qa_evidence/$label-menu-open-action.json"
+  sleep 1
+  ym_qa_capture "$label-menu-open"
+  "$ym_qa_helpers/panel-menu-actions" "$ym_qa_yomado_pid" select-open-panel > "$ym_qa_evidence/$label-menu-select-action.json"
+}
 ym_qa_own_ax_action() {
   local action="$1"
   /usr/bin/osascript - "$ym_qa_yomado_pid" "$action" <<'APPLESCRIPT'
@@ -123,7 +130,7 @@ kill -0 "$ym_qa_yomado_pid"
 ym_qa_capture 03-panel-closed-app-alive
 ym_qa_companion_command show
 sleep 2
-/usr/bin/open "$ym_qa_app"
+ym_qa_panel_menu 04-reopen
 sleep 3
 ym_qa_capture 04-reopen
 
@@ -132,7 +139,7 @@ sleep 2
 ym_qa_capture 05-minimized
 ym_qa_companion_command show
 sleep 2
-/usr/bin/open "$ym_qa_app"
+ym_qa_panel_menu 06-reopen-minimized
 sleep 3
 ym_qa_capture 06-reopen-minimized
 
@@ -143,7 +150,7 @@ ym_qa_capture 06-reopen-minimized
 ym_qa_companion_command enter-full-screen
 sleep 4
 ym_qa_capture 07-companion-full-screen
-/usr/bin/open "$ym_qa_app"
+ym_qa_panel_menu 08-open-from-full-screen
 sleep 4
 ym_qa_capture 08-open-from-full-screen
 ym_qa_companion_command exit-full-screen

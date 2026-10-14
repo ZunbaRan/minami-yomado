@@ -158,7 +158,7 @@ if args.first == "system-ui" {
     // Only the fresh runner's system UI relevant to enabling Stage Manager or
     // inspecting Mission Control. This is not a dump of arbitrary app content.
     var result: [[String: Any]] = []
-    for bundleID in ["com.apple.controlcenter", "com.apple.dock", "com.apple.systempreferences"] {
+    for bundleID in ["com.apple.controlcenter", "com.apple.dock", "com.apple.systempreferences", "com.apple.WindowManager"] {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { continue }
         var budget = 1600
         result.append(["bundleIdentifier": bundleID,

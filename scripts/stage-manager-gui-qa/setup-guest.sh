@@ -53,6 +53,11 @@ done
 # windows have been created by this suite yet.
 /usr/bin/osascript -e 'tell application "System Events" to key code 53' \
   > "$ym_qa_evidence/control-center-dismiss.txt" 2> "$ym_qa_evidence/control-center-dismiss.stderr" || true
+"$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/before-onboarding-action-ax.json"
+"$ym_qa_helpers/stage-manager-action" finish-onboarding \
+  > "$ym_qa_evidence/onboarding-action.txt" 2> "$ym_qa_evidence/onboarding-action.stderr"
+"$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/after-onboarding-action-ax.json"
+/usr/sbin/screencapture -x "$ym_qa_evidence/after-onboarding-action.png"
 "$ym_qa_helpers/observe" > "$ym_qa_evidence/setup-final.json"
 printf '%s\n' '{"setupAttempted":true,"stageManagerRuntimeVerified":false,"requiresReview":"Check separate Spaces API, actual Control Center state, and visible Stage Manager grouping. Preference writes are not acceptance."}' \
   > "$ym_qa_evidence/setup-status.json"

@@ -18,6 +18,13 @@ ym_desktop_select_second() {
   "$ym_qa_helpers/desktop-actions" select 2 > "$ym_qa_evidence/$1-selection.json"
   sleep 3
 }
+ym_desktop_panel_menu() {
+  local label="$1"
+  "$ym_qa_helpers/panel-menu-actions" "$ym_qa_yomado_pid" open > "$ym_qa_evidence/$label-menu-open-action.json"
+  sleep 1
+  ym_desktop_capture "$label-menu-open"
+  "$ym_qa_helpers/panel-menu-actions" "$ym_qa_yomado_pid" select-open-panel > "$ym_qa_evidence/$label-menu-select-action.json"
+}
 
 # The identifiers and descriptions below were actually observed in the
 # preceding hosted-runner Mission Control AX evidence. The native helper
@@ -33,7 +40,7 @@ ym_desktop_capture 02-two-desktops
 sleep 3
 ym_desktop_capture 03-second-desktop-before-open
 
-/usr/bin/open "$ym_qa_app"
+ym_desktop_panel_menu 04-existing-panel-from-second-desktop
 sleep 3
 ym_desktop_capture 04-existing-panel-from-second-desktop
 ym_desktop_mc
@@ -55,7 +62,7 @@ kill -0 "$ym_qa_yomado_pid"
 sleep 1
 ym_desktop_select_second 06-closed-panel-second-desktop
 ym_desktop_capture 06-closed-panel-second-desktop
-/usr/bin/open "$ym_qa_app"
+ym_desktop_panel_menu 07-reopened-from-second-desktop
 sleep 3
 ym_desktop_capture 07-reopened-from-second-desktop
 ym_desktop_mc
