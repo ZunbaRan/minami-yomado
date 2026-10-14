@@ -15,14 +15,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: experiment-normal-bundle
-            revision: 6f65a4069181b3f023b7004772f31df8109608f3
-            space-switching: off
-          - variant: experiment-sync-intent
-            revision: 6f65a4069181b3f023b7004772f31df8109608f3
-            space-switching: off
-          - variant: experiment-activate-all
-            revision: 6f65a4069181b3f023b7004772f31df8109608f3
+          - variant: regular-default-spaces
+            revision: 3776ed9c5ec1fb49260bf3400da1492210dfa091
+            space-switching: default
+          - variant: regular-no-auto-spaces
+            revision: 3776ed9c5ec1fb49260bf3400da1492210dfa091
             space-switching: off
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -40,13 +37,12 @@ jobs:
           mkdir -p test-output/gui-qa
           xcrun swift scripts/stage-manager-gui-qa/preflight.swift > test-output/gui-qa/preflight.json
           git -C production rev-parse HEAD > test-output/gui-qa/tested-revision.txt
-      - name: Build recorded diagnostic patch and QA helpers
+      - name: Build exact unchanged production revision and QA helpers
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/stage-manager-gui-qa/fullscreen-experiment.py production "${{ matrix.variant }}" > test-output/gui-qa/experiment.json
-          git -C production diff --no-ext-diff > test-output/gui-qa/experiment.patch
           env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
+          git -C production diff --exit-code
           bash scripts/stage-manager-gui-qa/build-helpers.sh "$RUNNER_TEMP/yomado-gui-helpers"
       - name: Verify actual Space-switching setting in disposable guest
         shell: bash
