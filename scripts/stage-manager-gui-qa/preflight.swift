@@ -10,8 +10,8 @@ guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
 let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
 let state: [String: Any] = [
     "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
-    "onConsole": session["kCGSessionOnConsoleKey"] ?? false,
-    "loginDone": session["kCGSessionLoginDoneKey"] ?? false,
+    "onConsole": session[kCGSessionOnConsoleKey as String] ?? false,
+    "loginDone": session[kCGSessionLoginDoneKey as String] ?? false,
     "screenLocked": session["CGSSessionScreenIsLocked"] ?? false,
     "screenCount": NSScreen.screens.count,
     "separateSpaces": NSScreen.screensHaveSeparateSpaces,

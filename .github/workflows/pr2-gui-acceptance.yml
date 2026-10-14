@@ -8,12 +8,25 @@ concurrency:
   group: pr2-isolated-gui-qa
   cancel-in-progress: false
 jobs:
-  gui-preflight:
+  gui-evidence:
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: base
+            revision: 0513b90979c348f234579b74d7b41abbaac238fd
+          - variant: head
+            revision: 0ba91754139c374f2bfcbd4600c43363642007b5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ matrix.revision }}
+          path: production
           persist-credentials: false
       - name: Read isolated desktop capabilities
         shell: bash
@@ -21,13 +34,25 @@ jobs:
           set -euo pipefail
           mkdir -p test-output/gui-qa
           xcrun swift scripts/stage-manager-gui-qa/preflight.swift > test-output/gui-qa/preflight.json
-          cat test-output/gui-qa/preflight.json
-          /usr/sbin/screencapture -x test-output/gui-qa/desktop-preflight.png
-          /usr/bin/sips -g pixelWidth -g pixelHeight test-output/gui-qa/desktop-preflight.png
-      - name: Collect disposable-runner evidence
+          git -C production rev-parse HEAD > test-output/gui-qa/tested-revision.txt
+      - name: Build exact production revision and QA helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
+          bash scripts/stage-manager-gui-qa/build-helpers.sh "$RUNNER_TEMP/yomado-gui-helpers"
+      - name: Configure only the disposable guest and record UI
+        shell: bash
+        run: |
+          bash scripts/stage-manager-gui-qa/setup-guest.sh "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/setup"
+      - name: Record actual app lifecycle and full-screen scenarios
+        shell: bash
+        run: |
+          bash scripts/stage-manager-gui-qa/phase1.sh "$GITHUB_WORKSPACE/production/dist/Yomado.app" "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/scenarios" "${{ matrix.variant }}"
+      - name: Collect disposable-runner evidence for review
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr2-gui-preflight
+          name: pr2-gui-${{ matrix.variant }}
           path: test-output/gui-qa/
           retention-days: 3
