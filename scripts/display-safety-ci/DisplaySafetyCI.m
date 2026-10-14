@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <ColorSync/ColorSync.h>
 #import "VDVirtualDisplay.h"
 #import "YMDisplayTopology.h"
 #import "AppWorkspaceView.h"
@@ -28,6 +29,11 @@ static NSMutableArray *DispatchedEventKinds;
 static NSWindow *FixtureWindow;
 static NSRect InitialWindowFrame;
 
+static void PrintJSON(NSString *name,id value) {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:NULL];
+    NSString *line=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    printf("EVIDENCE %s %s\n",name.UTF8String,line.UTF8String);
+}
 static void Save(NSString *name, id value) {
     NSError *error = nil;
     NSData *data = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:&error];
@@ -63,13 +69,20 @@ static void Pump(double seconds) {
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:MAX(0,MIN(0.05, until.timeIntervalSinceNow))]];
     }
 }
+static NSDictionary *DisplayIdentity(CGDirectDisplayID d) {
+    CFUUIDRef uuid=CGDisplayCreateUUIDFromDisplayID(d);
+    NSString *identity=uuid ? CFBridgingRelease(CFUUIDCreateString(kCFAllocatorDefault,uuid)) : @"unavailable";
+    if (uuid) CFRelease(uuid);
+    return @{@"uuid":identity,@"vendor":@(CGDisplayVendorNumber(d)),@"model":@(CGDisplayModelNumber(d)),
+             @"serial":@(CGDisplaySerialNumber(d)),@"builtin":@(CGDisplayIsBuiltin(d))};
+}
 static NSArray *Inventory(void) {
     CGDirectDisplayID ids[64] = {0}; uint32_t count = 0;
     if (CGGetOnlineDisplayList(64, ids, &count) != kCGErrorSuccess) return @[];
     NSMutableArray *rows = [NSMutableArray array];
     for (uint32_t i = 0; i < count; i++) {
         CGDirectDisplayID d = ids[i]; CGRect b = CGDisplayBounds(d);
-        NSMutableDictionary *r = [@{@"id":@(d), @"main":@(CGDisplayIsMain(d)),
+        NSMutableDictionary *r = [@{@"id":@(d), @"identity":DisplayIdentity(d), @"main":@(CGDisplayIsMain(d)),
             @"active":@(CGDisplayIsActive(d)), @"online":@(CGDisplayIsOnline(d)),
             @"mirrorOf":@(CGDisplayMirrorsDisplay(d)), @"inMirrorSet":@(CGDisplayIsInMirrorSet(d)),
             @"rotation":@(CGDisplayRotation(d)),
@@ -99,9 +112,10 @@ static BOOL Preserved(NSArray *before, NSArray *after) {
     return YES;
 }
 static void Observe(NSString *label) {
-    Save([NSString stringWithFormat:@"%02u-%@.json", ++Sequence, label],
-        @{@"displays":Inventory(), @"fixtureWindowFrame":NSStringFromRect(FixtureWindow.frame),
-          @"fixtureWindowUnchanged":@(NSEqualRects(InitialWindowFrame, FixtureWindow.frame))});
+    NSDictionary *observation=@{@"displays":Inventory(), @"fixtureWindowFrame":NSStringFromRect(FixtureWindow.frame),
+          @"fixtureWindowUnchanged":@(NSEqualRects(InitialWindowFrame, FixtureWindow.frame))};
+    PrintJSON(label,observation);
+    Save([NSString stringWithFormat:@"%02u-%@.json", ++Sequence, label],observation);
 }
 static NSDictionary *ModeFacts(CGDisplayModeRef mode) {
     return @{@"width":@(CGDisplayModeGetWidth(mode)), @"height":@(CGDisplayModeGetHeight(mode)),
@@ -116,7 +130,7 @@ static NSDictionary *ProbeModeAvailability(CGDirectDisplayID d) {
     NSMutableArray *described=[NSMutableArray array];
     CFIndex count=modes ? CFArrayGetCount(modes) : 0;
     for (CFIndex i=0; i<MIN(count,128); i++) [described addObject:ModeFacts((CGDisplayModeRef)CFArrayGetValueAtIndex(modes,i))];
-    NSMutableDictionary *result=[@{@"displayID":@(d),@"active":@(CGDisplayIsActive(d)),@"online":@(CGDisplayIsOnline(d)),
+    NSMutableDictionary *result=[@{@"displayID":@(d),@"identity":DisplayIdentity(d),@"active":@(CGDisplayIsActive(d)),@"online":@(CGDisplayIsOnline(d)),
         @"currentModeAvailable":@(current!=NULL),@"allModesListAvailable":@(modes!=NULL),@"allModesCount":@(count),
         @"allModes":described,@"bounds":@{@"x":@(bounds.origin.x),@"y":@(bounds.origin.y),@"width":@(bounds.size.width),@"height":@(bounds.size.height)},
         @"pixelWidth":@(CGDisplayPixelsWide(d)),@"pixelHeight":@(CGDisplayPixelsHigh(d))} mutableCopy];
@@ -144,6 +158,7 @@ static NSDictionary *FreshProcessModeProbe(CGDirectDisplayID d) {
 static VDVirtualDisplay *Make(NSUInteger w, NSUInteger h, BOOL hidpi) {
     VDVirtualDisplay *d = [[VDVirtualDisplay alloc] initWithSerialNumber:0x59430000 + (uint32_t)Owned.count + Sequence * 19];
     [Owned addObject:d]; NSError *error = nil;
+    printf("STAGE create-owned-output %lu %lu hidpi=%d\n",(unsigned long)w,(unsigned long)h,hidpi);
     if (![d createWithWidth:w height:h hiDPI:hidpi name:@"yomado disposable CI fixture" error:&error]) {
         Check(@"private-api-create", NO, error.localizedDescription); return nil;
     }
@@ -161,10 +176,12 @@ static VDVirtualDisplay *Make(NSUInteger w, NSUInteger h, BOOL hidpi) {
     NSMutableDictionary *diagnostic=[@{@"requestedWidth":@(w),@"requestedHeight":@(h),@"hiDPI":@(hidpi),@"samples":samples,@"dispatchedEventKinds":DispatchedEventKinds.copy ?: @[]} mutableCopy];
     if (![last[@"currentModeAvailable"] boolValue]) diagnostic[@"freshProcess"]=FreshProcessModeProbe(d.displayID);
     diagnostic[@"inventory"]=Inventory();
+    PrintJSON(@"mode-availability",diagnostic);
     Save([NSString stringWithFormat:@"mode-availability-%lu.json",(unsigned long)Owned.count],diagnostic);
     return d;
 }
 static BOOL Mirror(CGDirectDisplayID follower, CGDirectDisplayID root) {
+    printf("STAGE force-mirror follower=%u root=%u\n",follower,root);
     CGDisplayConfigRef config = NULL;
     if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || !config) return NO;
     CGError e = CGConfigureDisplayMirrorOfDisplay(config, follower, root);
@@ -174,6 +191,7 @@ static BOOL Mirror(CGDirectDisplayID follower, CGDirectDisplayID root) {
     return CGDisplayMirrorsDisplay(follower) == root && CGDisplayIsInMirrorSet(follower);
 }
 static BOOL Move(CGDirectDisplayID d, int32_t x, int32_t y) {
+    printf("STAGE deliberate-move id=%u x=%d y=%d\n",d,x,y);
     CGDisplayConfigRef config = NULL;
     if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || !config) return NO;
     CGError e = CGConfigureDisplayOrigin(config, d, x, y);
@@ -192,11 +210,12 @@ static id Profile(VDVirtualDisplay *display) {
 }
 static BOOL Configure(YMDisplayTopology *topology, VDVirtualDisplay *d, YMDisplayTopologySnapshot *baseline, NSString *label) {
     NSError *error = nil;
+    printf("STAGE configure %s id=%u\n",label.UTF8String,d.displayID);
     BOOL ok = [topology configureAndVerifyNewDisplay:d.displayID width:d.logicalWidth height:d.logicalHeight hiDPI:d.hiDPI baseline:baseline error:&error];
     Check(label, ok, error.localizedDescription); Observe(label); return ok;
 }
 static void RemoveAndRestore(YMDisplayTopology *topology, VDVirtualDisplay *d, YMDisplayTopologySnapshot *baseline, NSArray *before, NSString *label) {
-    CGDirectDisplayID removed = d.displayID; [d destroy]; NSError *error = nil;
+    CGDirectDisplayID removed = d.displayID; printf("STAGE remove-restore %s id=%u\n",label.UTF8String,removed); [d destroy]; NSError *error = nil;
     BOOL ok = [topology restoreAndVerifySnapshot:baseline excludingDisplayID:removed error:&error];
     Check(label, ok, error.localizedDescription);
     Check([label stringByAppendingString:@"-independent-inventory"], Preserved(before, Inventory()), @"All earlier mode, origin, mirror, rotation, main and active fields must be identical.");
@@ -268,6 +287,7 @@ static void CheckWorkspaceAdmissionUI(void) {
     [drag.draggingPasteboard releaseGlobally];
 }
 int main(int argc, const char **argv) {
+    setvbuf(stdout,NULL,_IONBF,0);
     @autoreleasepool {
         NSDictionary *environment = NSProcessInfo.processInfo.environment;
         if (![environment[@"GITHUB_ACTIONS"] isEqual:@"true"] || ![environment[@"RUNNER_ENVIRONMENT"] isEqual:@"github-hosted"]) {
@@ -275,7 +295,8 @@ int main(int argc, const char **argv) {
         }
         if (argc == 3 && strcmp(argv[1],"--probe-modes") == 0) {
             CGDirectDisplayID d=(CGDirectDisplayID)strtoul(argv[2],NULL,10);
-            NSData *data=[NSJSONSerialization dataWithJSONObject:ProbeModeAvailability(d) options:NSJSONWritingSortedKeys error:NULL];
+            NSMutableDictionary *probe=[ProbeModeAvailability(d) mutableCopy]; probe[@"inventory"]=Inventory();
+            NSData *data=[NSJSONSerialization dataWithJSONObject:probe options:NSJSONWritingSortedKeys error:NULL];
             fwrite(data.bytes,1,data.length,stdout); return 0;
         }
         if (argc != 2) return 64;
@@ -373,6 +394,7 @@ int main(int argc, const char **argv) {
         } @catch (NSException *exception) {
             Check(@"unhandled-scenario-exception",NO,exception.name);
         } @finally {
+            printf("STAGE final-cleanup\n");
             for (VDVirtualDisplay *d in Owned.reverseObjectEnumerator) if (d.isCreated) [d destroy];
             Pump(1.0); error = nil;
             BOOL restored = [topology restoreAndVerifySnapshot:initial excludingDisplayID:0 error:&error];
