@@ -40,19 +40,9 @@ sleep 2
 # Start from the explicitly requested on preference, record each result, and
 # leave effective state to screenshot/AX review; never treat the flag as proof.
 for ym_qa_toggle in off on; do
-  /usr/bin/osascript <<'APPLESCRIPT' > "$ym_qa_evidence/stage-manager-toggle-$ym_qa_toggle.txt" 2> "$ym_qa_evidence/stage-manager-toggle-$ym_qa_toggle.stderr"
-tell application "System Events"
-  tell process "ControlCenter"
-    set toggles to every checkbox of group 1 of window "Control Center" whose description is "Stage Manager"
-    if (count of toggles) is not 1 then error "Expected one observed Stage Manager toggle"
-    set targetToggle to item 1 of toggles
-    if not (enabled of targetToggle) then error "Stage Manager toggle is disabled"
-    set previousValue to value of targetToggle
-    click targetToggle
-    return "Clicked Stage Manager; previous AXValue=" & (previousValue as text)
-  end tell
-end tell
-APPLESCRIPT
+  "$ym_qa_helpers/stage-manager-action" "$ym_qa_toggle" \
+    > "$ym_qa_evidence/stage-manager-toggle-$ym_qa_toggle.txt" \
+    2> "$ym_qa_evidence/stage-manager-toggle-$ym_qa_toggle.stderr"
   sleep 3
   "$ym_qa_helpers/observe" > "$ym_qa_evidence/stage-manager-$ym_qa_toggle.json"
   "$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/stage-manager-$ym_qa_toggle-ax.json"
