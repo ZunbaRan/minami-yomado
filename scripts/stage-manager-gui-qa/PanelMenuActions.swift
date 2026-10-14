@@ -64,7 +64,25 @@ var record: [String: Any] = ["pid": pid, "command": args[1], "statusMenu": descr
                             "startUptimeSeconds": ProcessInfo.processInfo.systemUptime]
 switch args[1] {
 case "open":
-    press(extra)
+    // AXPress on this menu extra enters a tracking loop and returned
+    // cannotComplete in the real run. Click the current AX-reported icon
+    // bounds instead, matching a person's actual status-bar entry path.
+    guard let position = read(extra, kAXPositionAttribute), let dimensions = read(extra, kAXSizeAttribute),
+          CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(dimensions) == AXValueGetTypeID() else { fail("status icon geometry unavailable") }
+    let p = position as! AXValue, s = dimensions as! AXValue
+    var origin = CGPoint.zero, size = CGSize.zero
+    guard AXValueGetType(p) == .cgPoint, AXValueGetType(s) == .cgSize,
+          AXValueGetValue(p, .cgPoint, &origin), AXValueGetValue(s, .cgSize, &size),
+          size.width > 0, size.height > 0 else { fail("status icon geometry invalid") }
+    let point = CGPoint(x: origin.x+size.width/2, y: origin.y+size.height/2)
+    guard CGDisplayBounds(CGMainDisplayID()).contains(point) else { fail("status icon lies outside guest screen") }
+    guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left),
+          let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { fail("mouse event unavailable") }
+    move.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.8)
+    down.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.08); up.post(tap: .cghidEventTap)
+    record["inputPath"] = "mouse-at-current-AX-status-icon-center"
+    record["observedPoint"] = [point.x, point.y]
 case "select-open-panel":
     var target: AXUIElement?
     for _ in 0..<30 {
@@ -82,6 +100,6 @@ case "select-open-panel":
 default: fail("unsupported command")
 }
 record["endUptimeSeconds"] = ProcessInfo.processInfo.systemUptime
-record["nativeActionResult"] = "success"
+record["actionResult"] = args[1] == "open" ? "mouse-posted-menu-must-be-verified" : "native-AXPress-success"
 let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
 print(String(data: data, encoding: .utf8)!)

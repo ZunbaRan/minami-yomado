@@ -26,6 +26,11 @@ ym_qa_companion_pid=""
 ym_qa_reference_pid=""
 ym_qa_observer_pid=""
 ym_qa_cleanup() {
+  local exit_status=$?
+  if [[ "$exit_status" -ne 0 ]]; then
+    "$ym_qa_helpers/observe" > "$ym_qa_evidence/failure-state.json" || true
+    /usr/sbin/screencapture -x "$ym_qa_evidence/failure-state.png" || true
+  fi
   # All PIDs were started by this one run; never kill all instances by name.
   for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid" "$ym_qa_reference_pid"; do
     if [[ -n "$ym_qa_pid" ]] && kill -0 "$ym_qa_pid" 2>/dev/null; then kill -TERM "$ym_qa_pid" 2>/dev/null || true; fi

@@ -54,7 +54,8 @@ if CommandLine.arguments.last == "finish-onboarding" {
     func observedIntro() -> [String: Any]? {
         let all = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
         let matches = all.filter { item in
-            guard let b = item[kCGWindowBounds as String] as? [String: NSNumber] else { return false }
+            guard item[kCGWindowOwnerName as String] as? String == "StageManagerOnboarding",
+                  let b = item[kCGWindowBounds as String] as? [String: NSNumber] else { return false }
             return abs((b["X"]?.doubleValue ?? -10000)-192)<2
                 && abs((b["Y"]?.doubleValue ?? -10000)-84)<2
                 && abs((b["Width"]?.doubleValue ?? 0)-640)<2
