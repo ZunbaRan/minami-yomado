@@ -24,6 +24,7 @@ static NSMutableArray *Checks;
 static NSMutableArray<VDVirtualDisplay *> *Owned;
 static NSUInteger Blocked;
 static unsigned Sequence;
+static NSMutableArray *DispatchedEventKinds;
 static NSWindow *FixtureWindow;
 static NSRect InitialWindowFrame;
 
@@ -47,8 +48,20 @@ static void Block(NSString *name, NSString *reason) {
 }
 static void Pump(double seconds) {
     NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
-    while (until.timeIntervalSinceNow > 0)
-        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:MIN(0.05, until.timeIntervalSinceNow)]];
+    while (until.timeIntervalSinceNow > 0) {
+        // Diagnostic: NSRunLoop alone does not implement the NSApplication event
+        // loop. Dispatch pending guest events to test whether AppKit updates the
+        // creator's CoreGraphics mode cache. No event contents are recorded.
+        for (NSUInteger i=0; i<32; i++) {
+            NSEvent *event=[NSApp nextEventMatchingMask:NSEventMaskAny untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+            if (!event) break;
+            NSMutableDictionary *kind=[@{@"type":@(event.type)} mutableCopy];
+            if (event.type==NSEventTypeAppKitDefined || event.type==NSEventTypeSystemDefined || event.type==NSEventTypeApplicationDefined) kind[@"subtype"]=@(event.subtype);
+            if (DispatchedEventKinds.count<256) [DispatchedEventKinds addObject:kind];
+            [NSApp sendEvent:event];
+        }
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:MAX(0,MIN(0.05, until.timeIntervalSinceNow))]];
+    }
 }
 static NSArray *Inventory(void) {
     CGDirectDisplayID ids[64] = {0}; uint32_t count = 0;
@@ -145,7 +158,7 @@ static VDVirtualDisplay *Make(NSUInteger w, NSUInteger h, BOOL hidpi) {
         if ([last[@"currentModeAvailable"] boolValue] && NSProcessInfo.processInfo.systemUptime-start>=0.5) break;
         Pump(0.2);
     } while(NSProcessInfo.processInfo.systemUptime-start<5.0);
-    NSMutableDictionary *diagnostic=[@{@"requestedWidth":@(w),@"requestedHeight":@(h),@"hiDPI":@(hidpi),@"samples":samples} mutableCopy];
+    NSMutableDictionary *diagnostic=[@{@"requestedWidth":@(w),@"requestedHeight":@(h),@"hiDPI":@(hidpi),@"samples":samples,@"dispatchedEventKinds":DispatchedEventKinds.copy ?: @[]} mutableCopy];
     if (![last[@"currentModeAvailable"] boolValue]) diagnostic[@"freshProcess"]=FreshProcessModeProbe(d.displayID);
     diagnostic[@"inventory"]=Inventory();
     Save([NSString stringWithFormat:@"mode-availability-%lu.json",(unsigned long)Owned.count],diagnostic);
@@ -268,7 +281,7 @@ int main(int argc, const char **argv) {
         if (argc != 2) return 64;
         Evidence = [NSString stringWithUTF8String:argv[1]];
         [[NSFileManager defaultManager] createDirectoryAtPath:Evidence withIntermediateDirectories:YES attributes:nil error:nil];
-        Checks = [NSMutableArray array]; Owned = [NSMutableArray array];
+        Checks = [NSMutableArray array]; Owned = [NSMutableArray array]; DispatchedEventKinds=[NSMutableArray array];
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp finishLaunching];
