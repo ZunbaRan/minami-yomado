@@ -196,6 +196,7 @@ if args.first == "system-ui" {
                    "actualIntervalFromPreviousSampleStartSeconds": actualInterval,
                    "requestedSleepAfterSampleSeconds": 0.1, "axTrusted": AXIsProcessTrusted(),
                    "dock": dock,
+                   "yomadoPID": yomado?.processIdentifier ?? -1,
                    "yomadoActivationPolicy": yomado?.activationPolicy.rawValue ?? -1])
         previousSampleStart = sampleStart
         index += 1

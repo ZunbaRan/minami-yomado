@@ -6,23 +6,29 @@ GUI entry point checks `GITHUB_ACTIONS=true` and
 Never run a helper or scenario on a person's desktop. Local typechecking is
 safe; helper execution belongs to the runner.
 
-The workflow builds the exact production commit pinned in its matrix and
-checks that the production source stays unchanged. No experimental patch is
-applied. Both jobs test the regular-application design: the Dock icon is now
-expected, and the menu-bar icon must remain usable.
+The current workflow is a bounded **diagnostic** matrix based on production
+commit `6f65a4069181b3f023b7004772f31df8109608f3`. It does not test an unchanged
+production commit. Each fresh guest receives exactly one recorded patch:
 
-## Two fresh guests
+- `experiment-normal-bundle`: `LSUIElement=false` only.
+- `experiment-sync-intent`: synchronous main-thread activation at the public
+  presenter entry, retaining its existing deferred presentation.
+- `experiment-activate-all`: replace only presenter activation with
+  `NSRunningApplication`'s `NSApplicationActivateAllWindows` request.
 
-`regular-default-spaces` preserves the default Mission Control setting.
-`regular-no-auto-spaces` turns off “When switching to an application, switch
-to a Space with open windows for the application” using that actual named
-System Settings accessibility control. The native helper records the real
-checkbox value before and after; it does not infer success from a plist.
+The guard requires the exact clean baseline and expected source sequence;
+artifacts include `experiment.json` and the full minimal `experiment.patch`.
+A successful experiment must be implemented and tested again as an exact
+production commit before it can support merging.
 
-The default job can continue collecting the main GUI scenarios if settings
-inspection is unavailable, but then its preference state remains unverified.
-The off job stops if the actual off state cannot be confirmed. Preference
-values and the observed resulting Space behavior must both be reviewed.
+## Fresh guests with automatic Space switching off
+
+All three guests turn off “When switching to an application, switch to a Space
+with open windows for the application” using that actual named System Settings
+accessibility control. The native helper records the real checkbox value before
+and after; it does not infer success from a plist. The job stops if the actual
+off state cannot be confirmed. Preference values and resulting Space behavior
+must both be reviewed. The full grouping/Desktop/full-screen suite is retained.
 [Apple documents this setting and its default behavior.](https://support.apple.com/guide/mac-help/mh14112/mac)
 
 Stage Manager setup is separately observed through the real Control Center
@@ -72,7 +78,10 @@ actual monotonic intervals. A requested 100 ms sleep is not guaranteed 10 Hz.
 
 `check-regular-evidence.py` verifies bounded structural facts: regular policy,
 visible panel, enabled menu-bar control, Dock identity/reopen, true off-mode
-minimization, complete manual-group collection and sampler completion. These
+minimization, complete manual-group collection and sampler completion. Regular
+activation policy must remain regular after each PID first reaches regular;
+any earlier startup transients remain recorded explicitly. A startup transition
+from the old bundle declaration is not a steady-state policy failure. These
 checks do not infer Stage Manager groups from flags. A green job still requires
 independent review of the actual positive-control, group, Desktop and full-screen
 screenshots before product acceptance or merging.

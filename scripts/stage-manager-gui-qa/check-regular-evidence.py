@@ -6,6 +6,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 checks = []
+startup_observations = []
 def check(name, condition):
     checks.append({"name": name, "passed": bool(condition)})
 def read(name):
@@ -54,12 +55,45 @@ try:
     check("manual group scenario collected without blocked guard", group.get("exitCode") == 0)
     timeline = [json.loads(line) for line in (root / "dock-timeline.jsonl").read_text().splitlines()]
     running = [s for s in timeline if s.get("recordType") == "sample" and s.get("yomadoActivationPolicy", -1) != -1]
-    check("all observed running policies regular", bool(running) and all(s["yomadoActivationPolicy"] == 0 for s in running))
+    if running and all(s.get("yomadoPID", -1) > 0 for s in running):
+        regular_pids = set()
+        stable_running = []
+        for sample in running:
+            pid = sample["yomadoPID"]
+            if sample["yomadoActivationPolicy"] == 0:
+                regular_pids.add(pid)
+            if pid in regular_pids:
+                stable_running.append(sample)
+            else:
+                startup_observations.append({"elapsedSeconds": sample["elapsedSeconds"], "pid": pid,
+                    "activationPolicy": sample["yomadoActivationPolicy"]})
+        check("every observed product process reached regular policy", regular_pids == {s["yomadoPID"] for s in running})
+        check("each product process remains regular after its first regular sample", bool(stable_running) and
+              all(s["yomadoActivationPolicy"] == 0 for s in stable_running))
+    else:
+        # Older evidence has no per-sample PID. Use only the explicitly captured
+        # stable-panel intervals; do not silently infer identity through a restart.
+        first_stable = read("02-yomado-first-open.json")["monotonicUptimeSeconds"]
+        restart_path = root / "12-native-launch-before-restart.json"
+        if restart_path.exists():
+            before_restart = read("12-native-launch-before-restart.json")["monotonicUptimeSeconds"]
+            second_stable = read("14-native-cold-launch-result.json")["monotonicUptimeSeconds"]
+            stable_intervals = [(first_stable, before_restart), (second_stable, float("inf"))]
+            check("native cold launch reached regular policy", app(read("14-native-cold-launch-result.json")).get("activationPolicy") == 0)
+        else:
+            stable_intervals = [(first_stable, float("inf"))]
+        stable_running = [s for s in running if any(start <= s["sampleStartUptimeSeconds"] <= end for start, end in stable_intervals)]
+        startup_observations = [{"elapsedSeconds": s["elapsedSeconds"], "activationPolicy": s["yomadoActivationPolicy"]}
+                                for s in running if s not in stable_running and s["yomadoActivationPolicy"] != 0]
+        check("legacy evidence: all running policies after each first stable panel are regular", bool(stable_running) and
+              all(s["yomadoActivationPolicy"] == 0 for s in stable_running))
     check("timeline completed by requested stop", timeline[-1].get("reason") == "requested-stop")
 except Exception as error:
     checks.append({"name": "complete expected evidence", "passed": False, "errorType": type(error).__name__})
 
 result = {"checks": checks, "passed": sum(c["passed"] for c in checks), "failed": sum(not c["passed"] for c in checks),
+          "nonRegularStartupObservations": startup_observations,
+          "activationPolicyBoundary": "startup transients retained; each PID must remain regular after its first regular sample; legacy evidence uses explicit stable-panel snapshot intervals",
           "acceptanceVerdict": "requires independent screenshots and Space/group behavior review"}
 print(json.dumps(result, indent=2))
 sys.exit(0 if result["failed"] == 0 else 1)
