@@ -9,6 +9,8 @@ MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/Observe.sw
 MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/DesktopActions.swift" -o "$ym_qa_build/desktop-actions"
 MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/PanelMenuActions.swift" -o "$ym_qa_build/panel-menu-actions"
 MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/StageManagerActions.swift" -o "$ym_qa_build/stage-manager-action"
+MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/SpaceSwitchSetting.swift" -o "$ym_qa_build/space-switch-setting"
+MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/PanelWindowActions.swift" -o "$ym_qa_build/panel-window-actions"
 cat > "$ym_qa_build/Companion.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

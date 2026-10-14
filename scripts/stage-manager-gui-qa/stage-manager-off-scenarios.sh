@@ -29,5 +29,14 @@ ym_off_capture 04-menu-open
 "$ym_off_helpers/panel-menu-actions" "$ym_off_product_pid" select-open-panel > "$ym_off_evidence/05-menu-select-action.json"
 sleep 3
 ym_off_capture 05-panel-stage-manager-off
+"$ym_off_helpers/panel-window-actions" "$ym_off_product_pid" minimize > "$ym_off_evidence/06-minimize-action.json"
+sleep 2
+ym_off_capture 06-minimized-stage-manager-off
+"$ym_off_helpers/panel-menu-actions" "$ym_off_product_pid" open > "$ym_off_evidence/07-restore-menu-open-action.json"
+sleep 1
+ym_off_capture 07-restore-menu-open
+"$ym_off_helpers/panel-menu-actions" "$ym_off_product_pid" select-open-panel > "$ym_off_evidence/08-restore-menu-select-action.json"
+sleep 3
+ym_off_capture 08-restored-after-minimize
 printf '%s\n' '{"collectionComplete":true,"stageManagerDisabled":"verify actual Control Center AXValue=0 and screenshot","panelVisibility":"requires real screenshot and current owned window evidence","noAutomaticPass":true,"terminalSetting":"Stage Manager left off in disposable runner"}' \
   > "$ym_off_evidence/collection-status.json"

@@ -15,12 +15,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: head
-            revision: 0ba91754139c374f2bfcbd4600c43363642007b5
-          - variant: combined-primary-activation-experiment
-            revision: 0ba91754139c374f2bfcbd4600c43363642007b5
-          - variant: regular-policy-diagnostic-not-shippable
-            revision: 0ba91754139c374f2bfcbd4600c43363642007b5
+          - variant: regular-default-spaces
+            revision: 6f65a4069181b3f023b7004772f31df8109608f3
+            space-switching: default
+          - variant: regular-no-auto-spaces
+            revision: 6f65a4069181b3f023b7004772f31df8109608f3
+            space-switching: off
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -37,18 +37,18 @@ jobs:
           mkdir -p test-output/gui-qa
           xcrun swift scripts/stage-manager-gui-qa/preflight.swift > test-output/gui-qa/preflight.json
           git -C production rev-parse HEAD > test-output/gui-qa/tested-revision.txt
-      - name: Apply explicitly labeled isolated experiment
-        if: matrix.variant != 'head'
-        shell: bash
-        run: |
-          python3 scripts/stage-manager-gui-qa/presentation-experiment.py production "${{ matrix.variant }}"
-          git -C production diff -- app/PanelPresentation.m app/Yomado.m > test-output/gui-qa/experimental-production.patch
-      - name: Build production revision or labeled experiment and QA helpers
+      - name: Build exact unchanged production revision and QA helpers
         shell: bash
         run: |
           set -euo pipefail
           env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
+          git -C production diff --exit-code
           bash scripts/stage-manager-gui-qa/build-helpers.sh "$RUNNER_TEMP/yomado-gui-helpers"
+      - name: Verify actual Space-switching setting in disposable guest
+        continue-on-error: ${{ matrix.space-switching == 'default' }}
+        shell: bash
+        run: |
+          bash scripts/stage-manager-gui-qa/setup-space-switch.sh "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/space-switching" "${{ matrix.space-switching }}"
       - name: Configure only the disposable guest and record UI
         shell: bash
         run: |

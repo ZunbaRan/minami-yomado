@@ -1,98 +1,82 @@
-# Hosted Stage Manager GUI evidence
+# Hosted Stage Manager GUI acceptance
 
-This harness is restricted to an ephemeral **GitHub-hosted macOS runner**. It
-must never be run on a person's desktop. Every entry point checks
-`GITHUB_ACTIONS=true` and `RUNNER_ENVIRONMENT=github-hosted`; no helper requests
-or modifies Accessibility or Screen Recording permission.
+This harness runs only in a disposable **GitHub-hosted macOS runner**. Every
+GUI entry point checks `GITHUB_ACTIONS=true` and
+`RUNNER_ENVIRONMENT=github-hosted`. It does not alter TCC or request permissions.
+Never run a helper or scenario on a person's desktop. Local typechecking is
+safe; helper execution belongs to the runner.
 
-The base and head jobs build exact revisions. A separately labeled
-`activation-order-experiment` job applies and saves one explicit presentation
-patch for comparison; its evidence is not attributed to the unchanged PR head.
+The workflow builds the exact production commit pinned in its matrix and
+checks that the production source stays unchanged. No experimental patch is
+applied. Both jobs test the regular-application design: the Dock icon is now
+expected, and the menu-bar icon must remain usable.
 
-Build the production base and PR revisions without changing their bundle IDs,
-activation policy, window classes, or launch path. Build the helpers with
-`build-helpers.sh <helper-directory>`. The helper compilation and every GUI
-operation must happen on the runner, not on a developer's machine.
+## Two fresh guests
 
-Run `setup-guest.sh <helper-directory> <evidence-directory>` for a bounded
-guest-only setup attempt and capture of the actual Control Center. This writes
-the Stage Manager and separate Spaces preferences and restarts only the fresh
-runner's Dock. It does not change TCC or claim the new preferences took effect.
+`regular-default-spaces` preserves the default Mission Control setting.
+`regular-no-auto-spaces` turns off “When switching to an application, switch
+to a Space with open windows for the application” using that actual named
+System Settings accessibility control. The native helper records the real
+checkbox value before and after; it does not infer success from a plist.
 
-Before interpreting `phase1.sh`, inspect the actual system Stage Manager switch and
-visible grouping behavior. A `GloballyEnabled` preference is insufficient:
-`NSScreen.screensHaveSeparateSpaces` and Window Manager availability can block
-activation. If a native settings change requires logout, complete that change
-on the disposable runner and verify the new graphical login session. Never
-edit TCC databases or treat a permission bypass as test setup. Only after
-runtime confirmation set `YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED=true`. Without
-that confirmation, the suite still gathers ordinary-window/full-screen
-evidence but records Stage Manager as unverified.
+The default job can continue collecting the main GUI scenarios if settings
+inspection is unavailable, but then its preference state remains unverified.
+The off job stops if the actual off state cannot be confirmed. Preference
+values and the observed resulting Space behavior must both be reviewed.
+[Apple documents this setting and its default behavior.](https://support.apple.com/guide/mac-help/mh14112/mac)
 
-Run `phase1.sh <production-app> <helper-directory> <evidence-directory> base`
-and then the same command for `head`, using separate artifact directories.
-The real Yomado binary is used, not preview mode or a recreated panel. It is
-paired with one recognizable regular application that owns only its own
-temporary window. The harness closes and reopens the production panel,
-minimizes and reopens it, and requests the panel from the companion's native
-full-screen Space. Closing the panel is checked to leave its process alive.
-Before the production launch, a second separately identified regular app
-(`QA Reference`, blue window) is activated and then `QA Companion` (red window)
-is reactivated. These screenshots establish whether Stage Manager separates
-ordinary apps at all. The real AppKit fixture also logs
-`NSScreen.screensHaveSeparateSpaces` and its active state, avoiding reliance
-on a command-line-only screen query. Reference is terminated after this check.
+Stage Manager setup is separately observed through the real Control Center
+switch and any onboarding sheet. A preference write is not proof that Stage
+Manager is operating. Two regular fixture apps provide a visual positive
+control: blue Reference and red Companion should alternate between the center
+and thumbnail rail. The native fixture logs separate-Spaces and active state.
 
-Evidence includes full desktop screenshots from the empty runner; CGWindow
-metadata and AX trees are restricted to these two apps. A Dock observer checks
-for the exact `yomado` Dock title or current bundle URL. Each observation must
-read the Dock successfully, finish traversal, and find the regular Companion's
-Dock icon as a positive control before an absent result can be interpreted.
-Missing Dock processes, AX read errors, truncation, or a missing positive
-control produce `unknown`, not an absent-icon result. The first flushed sample
-is required before Yomado is launched.
-The initial production launch uses LaunchServices, refusing a runner with an
-existing Yomado process so cleanup cannot target an unrelated instance.
+## Scenarios
 
-The observer records monotonic sample start/end times and the actual interval
-between samples. Its 100 ms sleep is only a requested delay after each walk;
-it is not a guaranteed 10 Hz observation rate. Absence from readable samples
-does not prove that an icon never appeared between samples. The production
-app's activation policy is recorded alongside those samples.
-Sampling continues until a stop file is written after the final screenshot,
-with a 240-second safety limit. A limit reached before the final capture is
-incomplete evidence. Compare the final snapshot's monotonic timestamp with
-the timeline's sample and termination timestamps when reviewing coverage.
+- Cold launch the actual production app through LaunchServices. Refuse a
+  preexisting product process so cleanup only targets this run's processes.
+- Close the panel, then reopen through a real mouse click on its current AX
+  menu-bar item and actual “打开控制面板” menu item. Keep PID/window evidence.
+- Close again, then click the exact Dock item whose title and bundle URL match
+  the running product. Verify reuse of the same process and panel window.
+- Click the currently observed minimize button, then reopen by menu. Only
+  `AXMinimized=true` proves true minimization; a Stage Manager thumbnail does
+  not. Repeat with Stage Manager off to verify true minimize/restore.
+- Put Companion into native full-screen and request Yomado via its revealed
+  menu bar. Capture whether the panel appears on an ordinary desktop rather
+  than over the full-screen app.
+- Create and select Desktop 2 through current Mission Control AX controls.
+  Request both an existing panel and a closed panel. Mission Control screenshots
+  distinguish returning to Desktop 1 from moving the window to Desktop 2.
+- Repeat a cold launch using an active native app's NSWorkspace launch handoff.
+- Drag Companion's real identified Stage Manager thumbnail into Yomado's
+  current stage. Switch to Reference, then reopen Yomado; inspect the paired
+  thumbnail and both restored windows to verify manual-group preservation.
+- Turn Stage Manager off through the actual Control Center checkbox, record
+  `AXValue=0`, and verify menu opening plus true minimize/restore.
 
-`observe system-ui` captures the fresh runner's Control Center, System
-Settings, and Mission Control accessibility trees for adaptive setup and
-Desktop creation. It performs no input. System UI elements must be inspected
-before using them; do not hardcode guessed screen coordinates.
-The final phase enters Mission Control once, records its screenshot and AX
-identifiers/enabled state, then closes it with Escape. It does not create or
-rearrange Desktops in that phase.
+All mouse points come from current, uniquely identified AX controls or exact
+owned CG windows. No guessed coordinates or private Space-changing API is used.
+The manual-group guard returns `78` if its actual starting state is unsuitable;
+that means blocked, not passed.
 
-## Acceptance boundary
+## Evidence and acceptance
 
-The harness deliberately does **not** infer a Stage Manager group from a
-collection-behavior bit, app activation policy, or `kCGWindowIsOnscreen` alone.
-Review the screenshots for the companion moving into a separate Stage Manager
-thumbnail when the head panel opens, compared with base; corroborate with
-window bounds and actual system UI. A screenshot must show Stage Manager
-actually operating before this can pass.
+Screenshots are captured from the empty guest with only fixture-generated
+content. Observation includes owned-app AX/CG state and relevant system UI.
+The Dock sampler requires a complete readable tree and a detected regular
+Companion icon as positive control. Missing processes, read errors or truncated
+walks produce `unknown`. The first flushed sample precedes product launch;
+sampling stops after the final scenario, with a 240-second cap. It records
+actual monotonic intervals. A requested 100 ms sleep is not guaranteed 10 Hz.
 
-The ordinary Desktop phase uses the previously observed native Mission Control
-identifiers `mc.spaces.add` and `mc.spaces.list`. It revalidates the current
-tree, enabled state and AXPress action, requires exactly one initial Desktop,
-creates a second, and selects it from the actual AX list. It requests the
-existing panel from Desktop 2, then closes the panel and requests it again
-from Desktop 2. Screenshots and a Mission Control capture distinguish returning
-to the existing panel's Desktop from moving the panel. No guessed coordinates
-or private Space-changing APIs are used. This remains evidence for review,
-not an automatic merge approval. Manual grouping should also be inspected
-separately if macOS grouping controls are available in the runner.
+`check-regular-evidence.py` verifies bounded structural facts: regular policy,
+visible panel, enabled menu-bar control, Dock identity/reopen, true off-mode
+minimization, complete manual-group collection and sampler completion. These
+checks do not infer Stage Manager groups from flags. A green job still requires
+independent review of the actual positive-control, group, Desktop and full-screen
+screenshots before product acceptance or merging.
 
-Do not upload unrelated user data, runner credentials, environment dumps,
-app profiles, or local paths. Before publication review screenshots and logs;
-use only the test fixture's generated content. The scripts neither merge a PR
-nor publish a release.
+Before public posting, inspect images and filter metadata. Do not publish raw
+system trees, private paths, account names, credentials or unrelated data.
+The harness does not merge PRs or publish releases.

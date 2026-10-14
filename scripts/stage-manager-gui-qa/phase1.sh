@@ -7,7 +7,7 @@ ym_qa_app="${1:?Usage: phase1.sh Yomado.app helper-directory evidence-directory 
 ym_qa_helpers="${2:?missing helper-directory}"
 ym_qa_evidence="${3:?missing evidence-directory}"
 ym_qa_variant="${4:?missing variant}"
-case "$ym_qa_variant" in base|head|activation-order-experiment|early-primary-experiment|sync-activation-experiment|legacy-activation-experiment|managed-primary-experiment|combined-primary-activation-experiment|regular-policy-diagnostic-not-shippable) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
+case "$ym_qa_variant" in regular-default-spaces|regular-no-auto-spaces) ;; *) printf 'Unknown production QA variant.\n' >&2; exit 64;; esac
 ym_qa_stage_manager="unverified"
 if [[ "${YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED:-}" == true \
    && "$(/usr/bin/defaults read com.apple.WindowManager GloballyEnabled 2>/dev/null || true)" == 1 ]]; then
@@ -65,8 +65,6 @@ on run argv
     tell targetProcess
       if actionName is "close" then
         click (first button of window 1 whose subrole is "AXCloseButton")
-      else if actionName is "minimize" then
-        set value of attribute "AXMinimized" of window 1 to true
       end if
     end tell
   end tell
@@ -83,7 +81,7 @@ ym_qa_capture 01-companion-front
 
 # A second independent regular app is a positive control for Stage Manager
 # itself. Both binaries use separate bundle IDs and separately owned windows.
-# If ordinary apps do not separate, the accessory-app A/B cannot prove its fix.
+# If ordinary apps do not separate, product grouping cannot be accepted.
 mkdir -p "$ym_qa_evidence/reference-control"
 YM_QA_CONTROL_DIRECTORY="$ym_qa_evidence/reference-control" \
   "$ym_qa_helpers/Reference.app/Contents/MacOS/Companion" > "$ym_qa_evidence/reference.jsonl" 2> "$ym_qa_evidence/reference.stderr" &
@@ -140,7 +138,14 @@ ym_qa_panel_menu 04-reopen
 sleep 3
 ym_qa_capture 04-reopen
 
-ym_qa_own_ax_action minimize
+ym_qa_own_ax_action close
+sleep 2
+ym_qa_capture 04a-panel-closed-before-dock
+"$ym_qa_helpers/panel-window-actions" "$ym_qa_yomado_pid" dock-open > "$ym_qa_evidence/04b-dock-open-action.json"
+sleep 3
+ym_qa_capture 04b-dock-reopen
+
+"$ym_qa_helpers/panel-window-actions" "$ym_qa_yomado_pid" minimize > "$ym_qa_evidence/05-minimize-action.json"
 sleep 2
 ym_qa_capture 05-minimized
 ym_qa_companion_command show
@@ -226,3 +231,4 @@ ym_qa_observer_pid=""
 
 printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"requires-review-of-desktops-evidence","dockSampling":"ready before LaunchServices launch; stop requested after final Desktop screenshot; compare monotonic sample start/end and final snapshot timestamps; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
   "$ym_qa_variant" "$ym_qa_stage_manager" > "$ym_qa_evidence/collection-status.json"
+python3 "$ym_qa_source/check-regular-evidence.py" "$ym_qa_evidence" > "$ym_qa_evidence/regular-structural-checks.json"
