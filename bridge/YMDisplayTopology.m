@@ -81,6 +81,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
         return nil;
     }
     NSMutableArray *items = [NSMutableArray arrayWithCapacity:count];
+    BOOL missingActiveMode = NO;
     for (uint32_t i = 0; i < count; i++) {
         CGDirectDisplayID display = displayIDs[i];
         CGRect bounds = CGDisplayBounds(display);
@@ -104,10 +105,18 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
             [item addEntriesFromDictionary:YMModeDescription(mode)];
             CGDisplayModeRelease(mode);
         } else if (CGDisplayIsActive(display)) {
-            YMFail(error, 4, @"An active display mode is unavailable; automatic layout changes are unavailable.");
-            return nil;
+            missingActiveMode = YES;
         }
         [items addObject:item.copy];
+    }
+    if (missingActiveMode) {
+        // AppKit's normal event loop updates process-local mode caches after
+        // hot-plug notifications. Preserve a complete identity inventory while
+        // the caller waits; never guess a mode from bounds or available modes.
+        if (error) *error = [NSError errorWithDomain:YMDisplayTopologyErrorDomain code:4 userInfo:@{
+            NSLocalizedDescriptionKey:@"An active display mode is temporarily unavailable; no application moves are permitted.",
+            @"displayInventory":items.copy}];
+        return nil;
     }
     return items;
 }
@@ -213,6 +222,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
 
 @interface YMDisplayTopology ()
 @property(nonatomic, strong) id<YMDisplayTopologyBackend> backend;
+@property(nonatomic) NSUInteger modeRetriesRemaining;
 @end
 
 @implementation YMDisplayTopology
@@ -278,15 +288,82 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     return YES;
 }
 
+- (NSArray<NSDictionary *> *)readCompleteDisplaysWithGuard:(BOOL (^)(NSArray<NSDictionary *> *, NSError **))guard
+                                                     error:(NSError **)error {
+    NSArray *identityAnchor = nil;
+    for (;;) {
+        NSError *failure = nil;
+        NSArray *complete = [self.backend readDisplaysWithError:&failure];
+        BOOL transientMode = [failure.domain isEqualToString:YMDisplayTopologyErrorDomain] && failure.code == 4;
+        NSArray *inventory = complete ?: (transientMode ? failure.userInfo[@"displayInventory"] : nil);
+        if (![inventory isKindOfClass:NSArray.class]) {
+            if (error) *error = failure;
+            return nil;
+        }
+        if (![self index:inventory error:error]) return nil;
+        if (guard) {
+            if (!guard(inventory, error)) return nil;
+        } else if (identityAnchor && ![self identitiesOf:inventory match:identityAnchor error:error]) {
+            return nil;
+        }
+        if (complete) return complete;
+        if (!transientMode || self.modeRetriesRemaining == 0) {
+            if (error) *error = failure;
+            return nil;
+        }
+        if (!identityAnchor) identityAnchor = inventory;
+        self.modeRetriesRemaining--;
+        [self.backend waitForNextObservation];
+    }
+}
+
+- (BOOL)guardCreationInventory:(NSArray<NSDictionary *> *)inventory baseline:(YMDisplayTopologySnapshot *)baseline
+                     display:(CGDirectDisplayID)displayID error:(NSError **)error {
+    NSMutableArray *expected = [baseline.displays mutableCopy];
+    NSDictionary *added = nil;
+    for (NSDictionary *item in inventory) if ([item[@"displayID"] unsignedIntValue] == displayID) added = item;
+    if (added) {
+        NSString *known = baseline.ownedRemovalIdentities[@(displayID)];
+        if (known && ![known isEqual:added[@"identity"]])
+            return YMFail(error, 31, @"The new display identity changed while its mode was loading.");
+        baseline.ownedRemovalIdentities = @{@(displayID):added[@"identity"]};
+        [expected addObject:added];
+    }
+    if (![self identitiesOf:inventory match:expected error:error]) return NO;
+    NSMutableSet *affected = [NSMutableSet setWithObject:@(displayID)];
+    BOOL expanded = YES;
+    while (expanded) {
+        expanded = NO;
+        for (NSDictionary *item in [inventory arrayByAddingObjectsFromArray:baseline.displays]) {
+            NSNumber *ident = item[@"displayID"], *mirror = item[@"mirrorOf"];
+            if (mirror.unsignedIntValue && ([affected containsObject:ident] || [affected containsObject:mirror])) {
+                NSUInteger old = affected.count; [affected addObject:ident]; [affected addObject:mirror];
+                expanded |= old != affected.count;
+            }
+        }
+    }
+    baseline.recoverableMirrorIDs = affected.copy;
+    NSDictionary *byID = [self index:inventory error:error];
+    for (NSDictionary *item in baseline.displays) {
+        if (![affected containsObject:item[@"displayID"]]
+            && !YMKeysEqual(item, byID[item[@"displayID"]], @[@"mirrorOf", @"inMirrorSet"]))
+            return YMFail(error, 26, @"An unrelated mirror group changed; automatic layout changes were stopped.");
+    }
+    return YES;
+}
+
 - (YMDisplayTopologySnapshot *)captureSnapshotWithError:(NSError **)error {
+    self.modeRetriesRemaining = 50;
     // Two independent reads and an unchanged generation avoid freezing a
     // half-applied configuration. Subsequent operations also check identities.
     for (NSUInteger attempt = 0; attempt < 8; attempt++) {
         NSUInteger generation = self.backend.reconfigurationGeneration;
-        NSArray *first = [self.backend readDisplaysWithError:error];
+        NSArray *first = [self readCompleteDisplaysWithGuard:nil error:error];
         if (!first || ![self index:first error:error]) return nil;
         [self.backend waitForNextObservation];
-        NSArray *second = [self.backend readDisplaysWithError:error];
+        NSArray *second = [self readCompleteDisplaysWithGuard:^BOOL(NSArray *items, NSError **guardError) {
+            return [self identitiesOf:items match:first error:guardError];
+        } error:error];
         if (!second) return nil;
         if (generation == self.backend.reconfigurationGeneration
             && [self identitiesOf:second match:first error:NULL] && [self statesOf:second match:first]) {
@@ -307,7 +384,9 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     // not merely waiting a fixed delay or seeing a single cached good snapshot.
     for (NSUInteger attempt = 0; attempt < 30; attempt++) {
         [self.backend waitForNextObservation];
-        NSArray *live = [self.backend readDisplaysWithError:error];
+        NSArray *live = [self readCompleteDisplaysWithGuard:^BOOL(NSArray *items, NSError **guardError) {
+            return [self identitiesOf:items match:expected error:guardError];
+        } error:error];
         if (!live || ![self identitiesOf:live match:expected error:error]) return NO;
         NSUInteger nextGeneration = self.backend.reconfigurationGeneration;
         if (generation != nextGeneration) stable = 0;
@@ -333,7 +412,9 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     if ([self statesOf:current match:expected]) return [self verifyExpected:expected error:error];
     // Fresh identity check immediately before obtaining the transaction.
     NSUInteger generation = self.backend.reconfigurationGeneration;
-    NSArray *fresh = [self.backend readDisplaysWithError:error];
+    NSArray *fresh = [self readCompleteDisplaysWithGuard:^BOOL(NSArray *items, NSError **guardError) {
+        return [self identitiesOf:items match:expected error:guardError];
+    } error:error];
     if (!fresh || ![self identitiesOf:fresh match:expected error:error]
         || ![self statesOf:fresh match:current])
         return YMFail(error, 20, @"The display configuration changed before the transaction could start.");
@@ -395,7 +476,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     // Retrying recovery must not undo the unrelated edit that caused refusal.
     // Transaction setter/commit errors and an unsettled owned layout may still
     // be recoverable; foreign identities, intent changes and races are not.
-    NSIndexSet *unsafe = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 4)];
+    NSIndexSet *unsafe = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 3)];
     if ([unsafe containsIndex:(NSUInteger)error.code] || (error.code >= 10 && error.code <= 16)
         || error.code == 18 || error.code == 20 || error.code == 22 || error.code == 26 || error.code == 31)
         snapshot.readOnlyRecovery = YES;
@@ -403,6 +484,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
 
 - (BOOL)configureAndVerifyNewDisplay:(CGDirectDisplayID)displayID width:(NSUInteger)width height:(NSUInteger)height
                              hiDPI:(BOOL)hiDPI baseline:(YMDisplayTopologySnapshot *)baseline error:(NSError **)error {
+    self.modeRetriesRemaining = 50;
     if (baseline.readOnlyRecovery) return YMFail(error, 30, @"An unrelated display change requires a new baseline before creating a screen.");
     NSError *failure = nil;
     BOOL result = [self configureOwnedDisplay:displayID width:width height:height hiDPI:hiDPI baseline:baseline error:&failure];
@@ -422,7 +504,9 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     // Creation visibility is asynchronous. No configuration writes occur until
     // the exact baseline plus the new ID is visible; foreign devices abort.
     for (NSUInteger attempt = 0; attempt < 20; attempt++) {
-        current = [self.backend readDisplaysWithError:error];
+        current = [self readCompleteDisplaysWithGuard:^BOOL(NSArray *items, NSError **guardError) {
+            return [self guardCreationInventory:items baseline:baseline display:displayID error:guardError];
+        } error:error];
         if (!current) return NO;
         for (NSDictionary *item in current) {
             if ([item[@"displayID"] unsignedIntValue] == displayID) newDisplay = item;
@@ -439,27 +523,6 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
     baseline.ownedRemovalIdentities = @{@(displayID):newDisplay[@"identity"]};
     NSDictionary *currentByID = [self index:current error:error];
     if (!currentByID) return NO;
-    // Only original mirror groups connected to the new display may have their
-    // edges repaired. A simultaneous edit to an unrelated group is not ours.
-    NSMutableSet<NSNumber *> *affected = [NSMutableSet setWithObject:@(displayID)];
-    BOOL expanded = YES;
-    while (expanded) {
-        expanded = NO;
-        for (NSDictionary *item in [current arrayByAddingObjectsFromArray:baseline.displays]) {
-            NSNumber *ident = item[@"displayID"], *mirror = item[@"mirrorOf"];
-            if (mirror.unsignedIntValue && ([affected containsObject:ident] || [affected containsObject:mirror])) {
-                NSUInteger old = affected.count; [affected addObject:ident]; [affected addObject:mirror];
-                expanded |= old != affected.count;
-            }
-        }
-    }
-    baseline.recoverableMirrorIDs = affected.copy;
-    for (NSDictionary *item in baseline.displays) {
-        NSDictionary *live = currentByID[item[@"displayID"]];
-        if (![affected containsObject:item[@"displayID"]]
-            && !YMKeysEqual(item, live, @[@"mirrorOf", @"inMirrorSet"]))
-            return YMFail(error, 26, @"An unrelated mirror group changed; automatic layout changes were stopped.");
-    }
     NSDictionary *mode = YMHasRequestedMode(newDisplay, width, height, hiDPI) ? newDisplay
         : [self.backend modeForDisplay:displayID width:width height:height hiDPI:hiDPI error:error];
     if (!mode) return NO;
@@ -485,6 +548,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
 }
 
 - (BOOL)restoreAndVerifySnapshot:(YMDisplayTopologySnapshot *)snapshot excludingDisplayID:(CGDirectDisplayID)displayID error:(NSError **)error {
+    self.modeRetriesRemaining = 50;
     NSError *failure = nil;
     BOOL result = [self restoreOwnedSnapshot:snapshot excludingDisplayID:displayID error:&failure];
     if (!result) { [self restrictRecoveryOf:snapshot afterError:failure]; if (error) *error = failure; }
@@ -497,7 +561,18 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
         return YMFail(error, 28, @"The saved display configuration cannot be restored after this removal.");
     NSArray *current = nil;
     for (NSUInteger attempt = 0; attempt < 30; attempt++) {
-        current = [self.backend readDisplaysWithError:error];
+        current = [self readCompleteDisplaysWithGuard:^BOOL(NSArray *items, NSError **guardError) {
+            NSMutableArray *allowed = [desired.displays mutableCopy];
+            NSString *known = snapshot.ownedRemovalIdentities[@(displayID)];
+            for (NSDictionary *saved in snapshot.displays)
+                if ([saved[@"displayID"] unsignedIntValue] == displayID) known = saved[@"identity"];
+            for (NSDictionary *item in items) if (displayID && [item[@"displayID"] unsignedIntValue] == displayID) {
+                if (known && ![known isEqual:item[@"identity"]])
+                    return YMFail(guardError, 31, @"The removed display ID was reused by another device; recovery was stopped.");
+                [allowed addObject:item];
+            }
+            return [self identitiesOf:items match:allowed error:guardError];
+        } error:error];
         if (!current) return NO;
         BOOL removed = YES;
         NSString *removedIdentity = snapshot.ownedRemovalIdentities[@(displayID)];
@@ -532,6 +607,7 @@ static void YMReconfigured(CGDirectDisplayID display, CGDisplayChangeSummaryFlag
 }
 
 - (BOOL)verifySnapshot:(YMDisplayTopologySnapshot *)snapshot error:(NSError **)error {
+    self.modeRetriesRemaining = 50;
     return [self index:snapshot.displays error:error] && [self verifyExpected:snapshot.displays error:error];
 }
 

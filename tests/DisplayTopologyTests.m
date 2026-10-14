@@ -41,6 +41,11 @@ static NSMutableDictionary *Screen(NSInteger ident, NSInteger x, NSInteger y, BO
 @property BOOL delayedReconfiguration;
 @property BOOL delayedThenStable;
 @property BOOL switched;
+@property NSUInteger modeMissingReads;
+@property NSUInteger modeMissingAfterCommit;
+@property NSUInteger missingModeID;
+@property BOOL foreignWhileModeMissing;
+@property BOOL mirrorEditWhileModeMissing;
 @property NSUInteger reads;
 @property NSUInteger waits;
 @property NSUInteger delayRemovalID;
@@ -63,7 +68,22 @@ static NSMutableDictionary *Screen(NSInteger ident, NSInteger x, NSInteger y, BO
     return nil;
 }
 - (NSArray *)readDisplaysWithError:(NSError **)error {
-    (void)error; self.reads++;
+    self.reads++;
+    if (self.modeMissingReads) {
+        self.modeMissingReads--;
+        NSMutableArray *partial = [NSMutableArray array];
+        for (NSDictionary *item in self.screens) {
+            NSMutableDictionary *copy = item.mutableCopy;
+            if ([copy[@"displayID"] unsignedIntegerValue] == self.missingModeID) {
+                for (NSString *key in @[@"modeToken", @"modeWidth", @"modeHeight", @"pixelWidth", @"pixelHeight", @"refreshRate", @"modeID", @"modeFlags"])
+                    [copy removeObjectForKey:key];
+            }
+            [partial addObject:copy];
+        }
+        if (error) *error = [NSError errorWithDomain:YMDisplayTopologyErrorDomain code:4 userInfo:@{
+            NSLocalizedDescriptionKey:@"Current mode unavailable", @"displayInventory":partial}];
+        return nil;
+    }
     return [[NSArray alloc] initWithArray:self.screens copyItems:YES];
 }
 - (NSDictionary *)modeForDisplay:(CGDirectDisplayID)displayID width:(NSUInteger)width height:(NSUInteger)height hiDPI:(BOOL)hiDPI error:(NSError **)error {
@@ -117,11 +137,20 @@ static NSMutableDictionary *Screen(NSInteger ident, NSInteger x, NSInteger y, BO
     if (self.modeMutationAfterCommit) [self find:1 in:self.screens][@"refreshRate"] = @30;
     if (self.foreignAfterCommit) [self.screens addObject:Screen(9, 7000, 0, NO, 800, 600, NO)];
     self.waits = 0;
+    if (self.modeMissingAfterCommit) { self.modeMissingReads = self.modeMissingAfterCommit; self.modeMissingAfterCommit = 0; }
     return YES;
 }
 - (void)cancelConfiguration { self.staged = nil; self.cancels++; [self.calls addObject:@"cancel"]; }
 - (void)waitForNextObservation {
     self.waits++;
+    if (self.modeMissingReads && self.foreignWhileModeMissing) {
+        [self.screens addObject:Screen(9, 7000, 0, NO, 800, 600, NO)]; self.foreignWhileModeMissing = NO;
+    }
+    if (self.modeMissingReads && self.mirrorEditWhileModeMissing) {
+        [self find:2 in:self.screens][@"mirrorOf"] = @1;
+        [self find:2 in:self.screens][@"inMirrorSet"] = @YES; [self find:1 in:self.screens][@"inMirrorSet"] = @YES;
+        self.mirrorEditWhileModeMissing = NO;
+    }
     if (self.delayRemovalID && self.waits == 3) {
         NSMutableDictionary *item = [self find:self.delayRemovalID in:self.screens]; [self.screens removeObject:item];
         self.delayRemovalID = 0; self.reconfigurationGeneration++;
@@ -333,6 +362,46 @@ static void RunTests(void) {
             @"closing a mirror follower derives the surviving master's membership correctly");
         Check(b.calls.count == 0, @"closing a mirror follower does not reconfigure an unchanged surviving group");
     }
+
+    b = [FakeBackend new]; t = [[YMDisplayTopology alloc] initWithBackend:b];
+    b.missingModeID = 1; b.modeMissingReads = 3;
+    s = Baseline(t);
+    Check(b.calls.count == 0 && b.waits >= 3, @"capture waits for actual mode without a write");
+    AddNew(b); b.missingModeID = 3; b.modeMissingReads = 4;
+    Check(Configure(t, s), @"creation waits for process-local mode cache to refresh");
+    Check([t isExtendedTarget:3 width:1920 height:1080 hiDPI:NO], @"complete mode evidence permits admission");
+
+    b = [FakeBackend new]; t = [[YMDisplayTopology alloc] initWithBackend:b]; s = Baseline(t); AddNew(b);
+    b.missingModeID = 3; b.modeMissingReads = 999;
+    NSUInteger beforeWait = b.waits;
+    NSError *modeFailure = nil;
+    Check(![t configureAndVerifyNewDisplay:3 width:1920 height:1080 hiDPI:NO baseline:s error:&modeFailure]
+        && modeFailure.code == 4 && b.calls.count == 0, @"missing mode never grants admission or triggers a write");
+    Check(b.waits - beforeWait == 50, @"mode-cache waiting is bounded to five seconds per operation");
+    [b.screens removeObject:[b find:3 in:b.screens]]; b.modeMissingReads = 0;
+    [b find:1 in:b.screens][@"pixelWidth"] = @2560;
+    Check([t restoreAndVerifySnapshot:s excludingDisplayID:3 error:NULL],
+        @"missing owned mode alone does not block guarded restoration after removal");
+    Check([b.calls containsObject:@"mode:1"], @"known original mode can be restored after unavailable new mode");
+
+    for (NSUInteger change = 0; change < 2; change++) {
+        b = [FakeBackend new]; t = [[YMDisplayTopology alloc] initWithBackend:b]; s = Baseline(t); AddNew(b);
+        b.missingModeID = 3; b.modeMissingReads = 10;
+        b.foreignWhileModeMissing = change == 0; b.mirrorEditWhileModeMissing = change == 1;
+        Check(!Configure(t, s) && b.calls.count == 0, @"partial inventories preserve foreign identity and mirror guards");
+        [b.screens removeObject:[b find:3 in:b.screens]]; b.modeMissingReads = 0;
+        Check(![t restoreAndVerifySnapshot:s excludingDisplayID:3 error:NULL] && b.calls.count == 0,
+            @"foreign changes during mode waiting permanently inhibit recovery writes");
+    }
+
+    b = [FakeBackend new]; t = [[YMDisplayTopology alloc] initWithBackend:b]; s = Baseline(t); AddNew(b);
+    b.missingModeID = 3; b.modeMissingAfterCommit = 3;
+    Check(Configure(t, s), @"post-commit verification tolerates transient mode cache unavailability");
+    [b.screens removeObject:[b find:3 in:b.screens]];
+    b.missingModeID = 1; b.modeMissingReads = 3;
+    Check([t restoreAndVerifySnapshot:s excludingDisplayID:3 error:NULL], @"recovery waits for current original modes before any decision");
+    b.modeMissingReads = 3;
+    Check([t verifySnapshot:s error:NULL], @"read-only verification also waits for a complete mode inventory");
 
     printf("Display topology: %lu checks passed (synthetic backend; no live display changes).\n", (unsigned long)checks);
 }

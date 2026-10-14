@@ -169,6 +169,8 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @property(nonatomic) YMDisplayTopology *displayTopology;
 @property YMDisplayTopologySnapshot *topologyRecoverySnapshot;
 @property CGDirectDisplayID topologyRecoveryRemovedID;
+@property(nonatomic) dispatch_queue_t topologyQueue;
+@property BOOL terminationAfterTopologyRecovery;
 @property BOOL appOperationInProgress;
 @property NSArray<NSDictionary *> *originalLayout;
 @property CGDirectDisplayID originalMain;
@@ -239,7 +241,7 @@ static NSView *YMSpacer(void) {
     return _displayTopology;
 }
 - (BOOL)canMoveIntoProfile:(YMManagedDisplay *)profile {
-    return profile && profile.topologyVerified && !self.topologyRecoverySnapshot && profile.display.isCreated &&
+    return profile && profile.topologyVerified && !self.displayOperationInProgress && !self.topologyRecoverySnapshot && profile.display.isCreated &&
         [self.displayTopology isExtendedTarget:profile.display.displayID width:profile.width height:profile.height hiDPI:profile.hiDPI];
 }
 - (void)reportTopologyError:(NSError *)error {
@@ -254,21 +256,45 @@ static NSView *YMSpacer(void) {
         [alert beginSheetModalForWindow:self.window completionHandler:nil];
     }
 }
-- (BOOL)recoverTopology:(YMDisplayTopologySnapshot *)snapshot removedID:(CGDirectDisplayID)removedID error:(NSError **)error {
-    BOOL restored = [self.displayTopology restoreAndVerifySnapshot:snapshot excludingDisplayID:removedID error:error];
-    self.topologyRecoverySnapshot = restored ? nil : snapshot;
-    self.topologyRecoveryRemovedID = restored ? 0 : removedID;
-    return restored;
+// CoreGraphics may not publish a new screen's mode to this process until
+// AppKit handles its display-change event. Keep the normal main event loop free
+// instead of recursively dispatching user input inside a configuration wait.
+- (void)performTopologyOperation:(BOOL (^)(NSError **))operation completion:(void (^)(BOOL, NSError *))completion {
+    if (!self.topologyQueue) self.topologyQueue = dispatch_queue_create("dev.chekusu.yomado.topology", DISPATCH_QUEUE_SERIAL);
+    dispatch_async(self.topologyQueue, ^{
+        @autoreleasepool {
+            NSError *error = nil;
+            BOOL result = operation(&error);
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(result, error); });
+        }
+    });
+}
+- (void)resumeTerminationAfterTopologyRecovery:(BOOL)recovered {
+    BOOL requested = self.terminationAfterTopologyRecovery;
+    self.terminationAfterTopologyRecovery = NO;
+    if (requested && recovered) dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+}
+- (void)recoverTopology:(YMDisplayTopologySnapshot *)snapshot removedID:(CGDirectDisplayID)removedID completion:(void (^)(BOOL, NSError *))completion {
+    self.topologyRecoverySnapshot = snapshot;
+    self.topologyRecoveryRemovedID = removedID;
+    YMDisplayTopology *topology = self.displayTopology;
+    [self performTopologyOperation:^BOOL(NSError **error) {
+        return [topology restoreAndVerifySnapshot:snapshot excludingDisplayID:removedID error:error];
+    } completion:^(BOOL restored, NSError *error) {
+        if (restored) { self.topologyRecoverySnapshot = nil; self.topologyRecoveryRemovedID = 0; }
+        completion(restored, error);
+    }];
 }
 - (void)retryTopologyRecovery:(id)sender {
     (void)sender;
     if (!self.topologyRecoverySnapshot || self.displayOperationInProgress || self.appOperationInProgress) return;
     self.displayOperationInProgress = YES;
-    NSError *error = nil;
-    BOOL restored = [self recoverTopology:self.topologyRecoverySnapshot removedID:self.topologyRecoveryRemovedID error:&error];
-    self.displayOperationInProgress = NO;
-    if (!restored) [self reportTopologyError:error];
-    [self updateInventory];
+    [self recoverTopology:self.topologyRecoverySnapshot removedID:self.topologyRecoveryRemovedID completion:^(BOOL restored, NSError *error) {
+        self.displayOperationInProgress = NO;
+        if (!restored) [self reportTopologyError:error];
+        [self updateInventory];
+        [self resumeTerminationAfterTopologyRecovery:restored];
+    }];
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     if (self.previewMode) return;
@@ -1101,33 +1127,40 @@ static NSView *YMSpacer(void) {
     }
     BOOL created = [profile.display createWithWidth:profile.width height:profile.height hiDPI:profile.hiDPI
                      name:[self titleForProfile:profile] error:&error];
-    BOOL configured = created && [self.displayTopology configureAndVerifyNewDisplay:profile.display.displayID
-        width:profile.width height:profile.height hiDPI:profile.hiDPI baseline:before error:&error];
-    if (configured) {
-        [self powerAssertions:YES];
-        configured = self.systemAssertion != kIOPMNullAssertionID && self.displayAssertion != kIOPMNullAssertionID;
-        if (!configured) error = [NSError errorWithDomain:YMDisplayTopologyErrorDomain code:50
-            userInfo:@{NSLocalizedDescriptionKey:@"保持唤醒请求失败，已取消创建工作屏。"}];
-    }
-    if (!configured) {
-        // Only this operation's owned object is removed. No sibling or external
-        // display is destroyed, and no application was admitted to this target.
-        CGDirectDisplayID removedID = profile.display.displayID;
-        if (profile.display.isCreated) [profile.display destroy];
-        NSError *recoveryError = nil;
-        BOOL recovered = [self recoverTopology:before removedID:removedID error:&recoveryError];
-        if (![self activeProfiles].count) [self powerAssertions:NO];
+    CGDirectDisplayID createdID = profile.display.displayID;
+    NSUInteger width = profile.width, height = profile.height;
+    BOOL hiDPI = profile.hiDPI;
+    YMDisplayTopology *topology = self.displayTopology;
+    void (^completeCreation)(BOOL, NSError *) = ^(BOOL configured, NSError *configurationError) {
+        if (configured) {
+            [self powerAssertions:YES];
+            configured = self.systemAssertion != kIOPMNullAssertionID && self.displayAssertion != kIOPMNullAssertionID;
+            if (!configured) configurationError = [NSError errorWithDomain:YMDisplayTopologyErrorDomain code:50
+                userInfo:@{NSLocalizedDescriptionKey:@"保持唤醒请求失败，已取消创建工作屏。"}];
+        }
+        if (!configured) {
+            // Only this operation's frozen owned object is removed. The main
+            // event loop stays available while WindowServer removes it.
+            if (profile.display.isCreated) [profile.display destroy];
+            [self recoverTopology:before removedID:createdID completion:^(BOOL recovered, NSError *recoveryError) {
+                if (![self activeProfiles].count) [self powerAssertions:NO];
+                self.displayOperationInProgress = NO;
+                [self reportTopologyError:recovered ? configurationError : recoveryError];
+                [self updateInventory];
+            }];
+            return;
+        }
+        profile.topologyVerified = YES;
+        [self saveDisplayProfiles];
         self.displayOperationInProgress = NO;
-        [self reportTopologyError:recovered ? error : recoveryError];
+        self.statusLabel.stringValue = [NSString stringWithFormat:@"%@ 已启动", [self titleForProfile:profile]];
+        self.detailLabel.stringValue = @"扩展模式与原有显示配置已核对，可以移入应用。";
         [self updateInventory];
-        return;
-    }
-    profile.topologyVerified = YES;
-    [self saveDisplayProfiles];
-    self.displayOperationInProgress = NO;
-    self.statusLabel.stringValue = [NSString stringWithFormat:@"%@ 已启动", [self titleForProfile:profile]];
-    self.detailLabel.stringValue = @"扩展模式与原有显示配置已核对，可以移入应用。";
-    [self updateInventory];
+    };
+    if (!created) { completeCreation(NO, error); return; }
+    [self performTopologyOperation:^BOOL(NSError **operationError) {
+        return [topology configureAndVerifyNewDisplay:createdID width:width height:height hiDPI:hiDPI baseline:before error:operationError];
+    } completion:completeCreation];
 }
 - (BOOL)writeStateEnding:(BOOL)end {
     if (self.previewMode) return NO;
@@ -1387,7 +1420,7 @@ static NSView *YMSpacer(void) {
 - (void)stop:(id)sender {
     (void)sender;
     if (self.previewMode || self.displayOperationInProgress || self.appOperationInProgress) return;
-    if (self.topologyRecoverySnapshot) { [self retryTopologyRecovery:nil]; if (self.topologyRecoverySnapshot) return; }
+    if (self.topologyRecoverySnapshot) { [self retryTopologyRecovery:nil]; return; }
     if (self.armed || self.preparing || self.layoutChangedForTrial) [self restore:nil];
     if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return;
     VDVirtualDisplay *closing = self.virtualDisplay;
@@ -1423,25 +1456,25 @@ static NSView *YMSpacer(void) {
     [self finishWatchdog];
     self.selectedProfile.topologyVerified = NO;
     [closing destroy];
-    BOOL recovered = [self recoverTopology:survivors removedID:removedID error:&topologyError];
-    self.displayOperationInProgress = NO;
-    if (![self activeProfiles].count) [self powerAssertions:NO];
-    if (self.wechatDisplayID && ![self profileForDisplayID:self.wechatDisplayID]) self.wechatDisplayID = 0;
-    if (!recovered) {
-        [self reportTopologyError:topologyError];
+    [self recoverTopology:survivors removedID:removedID completion:^(BOOL recovered, NSError *recoveryError) {
+        self.displayOperationInProgress = NO;
+        if (![self activeProfiles].count) [self powerAssertions:NO];
+        if (self.wechatDisplayID && ![self profileForDisplayID:self.wechatDisplayID]) self.wechatDisplayID = 0;
+        if (!recovered) [self reportTopologyError:recoveryError];
+        else {
+            self.statusLabel.stringValue = @"所选虚拟屏已关闭";
+            self.detailLabel.stringValue = @"其他工作屏继续运行。已关闭的屏幕保留名称，可再次启动。";
+        }
         [self updateInventory];
-        return;
-    }
-    self.statusLabel.stringValue = @"所选虚拟屏已关闭";
-    self.detailLabel.stringValue = @"其他工作屏继续运行。已关闭的屏幕保留名称，可再次启动。";
-    [self updateInventory];
+        [self resumeTerminationAfterTopologyRecovery:recovered];
+    }];
 }
 - (void)quit:(id)sender { (void)sender; [NSApp terminate:nil]; }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (self.previewMode) return NSTerminateNow;
     (void)sender;
     if (self.displayOperationInProgress || self.appOperationInProgress) return NSTerminateCancel;
-    if (self.topologyRecoverySnapshot) { [self retryTopologyRecovery:nil]; if (self.topologyRecoverySnapshot) return NSTerminateCancel; }
+    if (self.topologyRecoverySnapshot) { self.terminationAfterTopologyRecovery = YES; [self retryTopologyRecovery:nil]; return NSTerminateCancel; }
     if (self.armed || self.preparing || self.layoutChangedForTrial) [self restore:nil];
     if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return NSTerminateCancel;
     NSArray<YMManagedDisplay *> *active = [self activeProfiles];
@@ -1452,10 +1485,18 @@ static NSView *YMSpacer(void) {
             [self showWindow:nil]; return NSTerminateCancel;
         }
     }
-    for (YMManagedDisplay *profile in active) {
+    if (active.count) {
+        YMManagedDisplay *profile = active.firstObject;
         [self selectProfile:profile];
+        self.terminationAfterTopologyRecovery = YES;
         [self stop:nil];
-        if (profile.display.isCreated || self.topologyRecoverySnapshot) { [self showWindow:nil]; return NSTerminateCancel; }
+        // Successful asynchronous recovery resumes the quit sequence for the
+        // remaining outputs. Failure leaves the app and recovery controls alive.
+        if (!self.displayOperationInProgress) {
+            self.terminationAfterTopologyRecovery = NO;
+            if (profile.display.isCreated || self.topologyRecoverySnapshot) [self showWindow:nil];
+        }
+        return NSTerminateCancel;
     }
     if (self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay) { [self showWindow:nil]; return NSTerminateCancel; }
     [self writeStateEnding:YES];

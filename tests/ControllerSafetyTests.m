@@ -33,6 +33,7 @@
 @property NSUInteger configurations;
 @property NSUInteger restorations;
 @property CGDirectDisplayID lastRemoved;
+@property CGDirectDisplayID lastConfigured;
 @property YMDisplayTopologySnapshot *snapshot;
 @property(copy) void (^duringCapture)(void);
 @property(copy) void (^duringConfigure)(void);
@@ -49,7 +50,7 @@
     return self.captureResult ? self.snapshot : nil;
 }
 - (BOOL)configureAndVerifyNewDisplay:(CGDirectDisplayID)d width:(NSUInteger)w height:(NSUInteger)h hiDPI:(BOOL)hi baseline:(YMDisplayTopologySnapshot *)s error:(NSError **)error {
-    (void)d; (void)w; (void)h; (void)hi; (void)s; self.configurations++;
+    (void)w; (void)h; (void)hi; (void)s; self.configurations++; self.lastConfigured=d;
     if (self.duringConfigure) self.duringConfigure();
     if (!self.configureResult && error) *error = [NSError errorWithDomain:@"fixture" code:3 userInfo:nil];
     return self.configureResult;
@@ -73,14 +74,38 @@
 @property BOOL simulateFinalRemovalRecoveryFailure;
 @property NSUInteger stopCalls;
 @property NSUInteger showCalls;
+@property NSUInteger resumedTerminations;
+@property BOOL deferTopologyOperations;
+@property NSMutableArray<NSDictionary *> *pendingTopologyOperations;
+- (void)runNextTopologyOperation;
 @end
 @implementation YMFakeController
+- (void)performTopologyOperation:(BOOL (^)(NSError **))operation completion:(void (^)(BOOL, NSError *))completion {
+    if (self.deferTopologyOperations) {
+        if (!self.pendingTopologyOperations) self.pendingTopologyOperations=[NSMutableArray array];
+        [self.pendingTopologyOperations addObject:@{@"operation":[operation copy], @"completion":[completion copy]}];
+        return;
+    }
+    NSError *error=nil; BOOL succeeded=operation(&error); completion(succeeded,error);
+}
+- (void)runNextTopologyOperation {
+    NSDictionary *next=self.pendingTopologyOperations.firstObject;
+    NSAssert(next, @"A queued operation must exist");
+    [self.pendingTopologyOperations removeObjectAtIndex:0];
+    BOOL (^operation)(NSError **)=next[@"operation"];
+    void (^completion)(BOOL,NSError *)=next[@"completion"];
+    NSError *error=nil; BOOL succeeded=operation(&error); completion(succeeded,error);
+}
 - (void)updateInventory { self.inventoryUpdates++; }
 - (void)saveDisplayProfiles { self.saves++; }
 - (void)reportTopologyError:(NSError *)error { (void)error; self.reports++; }
 - (void)powerAssertions:(BOOL)on { self.systemAssertion = self.displayAssertion = on && !self.powerFails ? 1 : 0; }
 - (BOOL)restoreApplicationsForDisplayID:(CGDirectDisplayID)displayID { (void)displayID; return YES; }
 - (void)showWindow:(id)sender { (void)sender; self.showCalls++; }
+- (void)resumeTerminationAfterTopologyRecovery:(BOOL)recovered {
+    if (self.terminationAfterTopologyRecovery && recovered) self.resumedTerminations++;
+    self.terminationAfterTopologyRecovery=NO;
+}
 - (BOOL)writeStateEnding:(BOOL)end { (void)end; return YES; }
 - (void)stop:(id)sender {
     (void)sender; self.stopCalls++;
@@ -92,7 +117,11 @@
         self.selectedProfile.topologyVerified = NO;
         [self.virtualDisplay destroy];
         YMDisplayTopologySnapshot *snapshot = [(YMFakeTopology *)self.displayTopology snapshot];
-        [self recoverTopology:snapshot removedID:removed error:nil];
+        self.displayOperationInProgress=YES;
+        [self recoverTopology:snapshot removedID:removed completion:^(BOOL recovered,NSError *error) {
+            (void)error; self.displayOperationInProgress=NO;
+            [self resumeTerminationAfterTopologyRecovery:recovered];
+        }];
     }
 }
 @end
@@ -143,6 +172,51 @@ int main(void) {
         Expect([c canMoveIntoProfile:s],"recovery retry restores verified sibling admission");
         Expect(![c canMoveIntoProfile:p],"recovery retry does not admit removed target");
 
+        // A held operation exercises the real async boundary without starting
+        // AppKit, dispatching to a background queue, or invoking CoreGraphics.
+        c=Controller(&t,&d,&p,&s); c.deferTopologyOperations=YES;
+        [c create:nil];
+        Expect(d.live&&t.configurations==0&&c.pendingTopologyOperations.count==1,"creation returns while topology verification remains queued");
+        Expect(c.displayOperationInProgress&&!p.topologyVerified,"pending creation remains busy and unverified");
+        [c selectProfile:s];
+        Expect(c.selectedProfile==p&&c.virtualDisplay==d,"pending configuration prevents selection changes");
+        BOOL droppedSafely=YES;
+        @try { [c dropApplication:(NSDictionary *)(id)[NSObject new] targetDisplayID:202]; } @catch(NSException *e) { (void)e; droppedSafely=NO; }
+        Expect(droppedSafely&&!c.appOperationInProgress,"pending configuration rejects drop before reading invalid payload");
+        Expect([c applicationShouldTerminate:(NSApplication *)(id)[NSObject new]]==NSTerminateCancel&&d.destroys==0&&c.stopCalls==0,"pending configuration rejects quit without destroying output");
+        Expect(![c canMoveIntoProfile:p]&&![c canMoveIntoProfile:s],"all incoming admission blocked while configuration pending");
+        NSUInteger queuedCreates=d.creates;
+        [c create:nil]; Expect(d.creates==queuedCreates&&c.pendingTopologyOperations.count==1,"pending creation cannot start a second operation");
+        c.selectedProfile=s; c.virtualDisplay=s.display;
+        [c runNextTopologyOperation];
+        Expect(t.lastConfigured==202&&p.topologyVerified,"queued creation operates on its frozen original profile");
+        Expect(c.selectedProfile==s&&s.topologyVerified&&[(YMFakeDisplay *)s.display destroys]==0,"completion preserves later selection and sibling object");
+        Expect(!c.displayOperationInProgress&&[c canMoveIntoProfile:p],"successful async completion releases busy and admission");
+
+        c=Controller(&t,&d,&p,&s); c.deferTopologyOperations=YES; t.configureResult=NO;
+        [c create:nil]; c.selectedProfile=s; c.virtualDisplay=s.display;
+        [c runNextTopologyOperation];
+        Expect(d.destroys==1&&!d.live&&[(YMFakeDisplay *)s.display destroys]==0,"failed async creation destroys only captured original target");
+        Expect(c.displayOperationInProgress&&c.pendingTopologyOperations.count==1,"rollback stays busy until its own queued verification");
+        Expect(![c canMoveIntoProfile:s],"sibling admission remains blocked while rollback is pending");
+        [c selectProfile:p];
+        Expect(c.selectedProfile==s,"pending rollback prevents selection changes");
+        droppedSafely=YES;
+        @try { [c dropApplication:(NSDictionary *)(id)[NSObject new] targetDisplayID:101]; } @catch(NSException *e) { (void)e; droppedSafely=NO; }
+        Expect(droppedSafely&&!c.appOperationInProgress,"pending rollback rejects drop before reading invalid payload");
+        Expect([c applicationShouldTerminate:(NSApplication *)(id)[NSObject new]]==NSTerminateCancel&&[(YMFakeDisplay *)s.display destroys]==0,"pending rollback rejects quit without destroying survivor");
+        [c runNextTopologyOperation];
+        Expect(t.lastRemoved==202&&!c.displayOperationInProgress&&!c.topologyRecoverySnapshot,"queued rollback completes against exact removed ID");
+        Expect([c canMoveIntoProfile:s]&&!p.topologyVerified,"successful rollback reopens survivor gate only");
+
+        c=Controller(&t,&d,&p,&s); c.deferTopologyOperations=YES; t.configureResult=NO; t.restoreResult=NO;
+        [c create:nil]; [c runNextTopologyOperation]; [c runNextTopologyOperation];
+        Expect(c.topologyRecoverySnapshot==t.snapshot&&!c.displayOperationInProgress,"failed queued recovery retains original snapshot after busy clears");
+        t.restoreResult=YES; [c retryTopologyRecovery:nil];
+        Expect(c.displayOperationInProgress&&c.topologyRecoverySnapshot==t.snapshot&&c.pendingTopologyOperations.count==1,"queued recovery retry retains snapshot and busy until verified");
+        [c runNextTopologyOperation];
+        Expect(!c.topologyRecoverySnapshot&&!c.displayOperationInProgress&&[c canMoveIntoProfile:s],"queued recovery completion clears pending and restores admission");
+
         c=Controller(&t,&d,&p,&s); t.captureResult=NO; [c create:nil];
         Expect(d.creates==0&&t.configurations==0&&t.restorations==0,"incomplete baseline causes no creation or mutation");
         Expect(!p.topologyVerified&&!c.displayOperationInProgress,"capture failure leaves target denied and idle");
@@ -165,7 +239,34 @@ int main(void) {
         reply=[c applicationShouldTerminate:unusedSender];
         Expect(reply==NSTerminateCancel&&c.stopCalls==1,"repeated quit retries recovery without another destroy");
         t.restoreResult=YES; reply=[c applicationShouldTerminate:unusedSender];
-        Expect(reply==NSTerminateNow&&!c.topologyRecoverySnapshot,"verified recovery permits subsequent quit");
+        Expect(reply==NSTerminateCancel&&!c.topologyRecoverySnapshot&&c.resumedTerminations==1,"verified recovery schedules a new termination pass");
+        reply=[c applicationShouldTerminate:unusedSender];
+        Expect(reply==NSTerminateNow,"subsequent quit proceeds after verified recovery");
+
+        c=Controller(&t,&d,&p,&s); c.deferTopologyOperations=YES;
+        c.displayProfiles=[NSMutableArray arrayWithObject:s]; c.selectedProfile=s; c.virtualDisplay=s.display;
+        c.simulateFinalRemovalRecoveryFailure=YES; t.restoreResult=NO;
+        reply=[c applicationShouldTerminate:unusedSender];
+        Expect(reply==NSTerminateCancel&&c.displayOperationInProgress&&!s.display.isCreated,"async final-output removal keeps termination pending");
+        Expect(c.topologyRecoverySnapshot==t.snapshot&&c.resumedTerminations==0,"quit retains rollback snapshot until worker completes");
+        [c runNextTopologyOperation];
+        Expect(c.topologyRecoverySnapshot==t.snapshot&&!c.displayOperationInProgress&&c.resumedTerminations==0,"failed async rollback cannot resume termination");
+        t.restoreResult=YES; reply=[c applicationShouldTerminate:unusedSender];
+        Expect(reply==NSTerminateCancel&&c.displayOperationInProgress&&c.stopCalls==1,"later quit retries recovery without removing again");
+        [c runNextTopologyOperation];
+        Expect(c.resumedTerminations==1&&!c.topologyRecoverySnapshot&&!c.displayOperationInProgress,"successful async recovery resumes termination exactly once");
+        c=Controller(&t,&d,&p,&s); c.deferTopologyOperations=YES; d.live=YES; p.topologyVerified=YES;
+        c.simulateFinalRemovalRecoveryFailure=YES;
+        reply=[c applicationShouldTerminate:unusedSender];
+        Expect(reply==NSTerminateCancel&&!s.display.isCreated&&d.live&&c.stopCalls==1,"multi-output quit removes only first screen before verification");
+        Expect(c.pendingTopologyOperations.count==1&&c.resumedTerminations==0,"multi-output quit waits for first restoration");
+        [c runNextTopologyOperation];
+        Expect(c.resumedTerminations==1&&d.live,"first verified removal schedules continuation and preserves second output");
+        reply=[c applicationShouldTerminate:unusedSender];
+        Expect(reply==NSTerminateCancel&&!d.live&&c.stopCalls==2,"continuation closes second output in sequence");
+        [c runNextTopologyOperation];
+        Expect(c.resumedTerminations==2&&c.pendingTopologyOperations.count==0,"second verified removal schedules final termination exactly once");
+        Expect([c applicationShouldTerminate:unusedSender]==NSTerminateNow,"multi-output quit completes only after both restorations");
         Expect(NSApp == nil,"all controller tests leave NSApplication uninitialized");
         printf("Controller boundary tests: %lu passed, %lu failed; no GUI or display calls executed.\n",(unsigned long)(Tests-Failures),(unsigned long)Failures);
         return Failures?1:0;

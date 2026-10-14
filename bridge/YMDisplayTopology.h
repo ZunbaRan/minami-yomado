@@ -16,6 +16,8 @@ FOUNDATION_EXPORT NSErrorDomain const YMDisplayTopologyErrorDomain;
 
 /// Injectable transaction boundary. Tests use synthetic inventories and never
 /// access WindowServer. Mode tokens are retained objects owned by each snapshot.
+/// Error 4 may include a complete identity inventory under "displayInventory"
+/// while current mode metadata is pending; partial data never grants admission.
 @protocol YMDisplayTopologyBackend <NSObject>
 - (nullable NSArray<NSDictionary<NSString *, id> *> *)readDisplaysWithError:(NSError **)error;
 - (nullable NSDictionary<NSString *, id> *)modeForDisplay:(CGDirectDisplayID)displayID
@@ -31,6 +33,9 @@ FOUNDATION_EXPORT NSErrorDomain const YMDisplayTopologyErrorDomain;
 @property(nonatomic, readonly) NSUInteger reconfigurationGeneration;
 @end
 
+/// Serialize capture/configuration/recovery calls on one operation queue. A GUI
+/// must keep its normal main AppKit event loop running during these bounded
+/// operations so display notifications can refresh process-local mode caches.
 @interface YMDisplayTopology : NSObject
 - (instancetype)init;
 - (instancetype)initWithBackend:(id<YMDisplayTopologyBackend>)backend NS_DESIGNATED_INITIALIZER;
