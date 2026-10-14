@@ -7,7 +7,7 @@ ym_qa_app="${1:?Usage: phase1.sh Yomado.app helper-directory evidence-directory 
 ym_qa_helpers="${2:?missing helper-directory}"
 ym_qa_evidence="${3:?missing evidence-directory}"
 ym_qa_variant="${4:?missing variant}"
-case "$ym_qa_variant" in base|head|activation-order-experiment) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
+case "$ym_qa_variant" in base|head|activation-order-experiment|early-primary-experiment|sync-activation-experiment|legacy-activation-experiment|managed-primary-experiment) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
 ym_qa_stage_manager="unverified"
 if [[ "${YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED:-}" == true \
    && "$(/usr/bin/defaults read com.apple.WindowManager GloballyEnabled 2>/dev/null || true)" == 1 ]]; then
