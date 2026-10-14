@@ -7,7 +7,7 @@ ym_qa_app="${1:?Usage: phase1.sh Yomado.app helper-directory evidence-directory 
 ym_qa_helpers="${2:?missing helper-directory}"
 ym_qa_evidence="${3:?missing evidence-directory}"
 ym_qa_variant="${4:?missing variant}"
-case "$ym_qa_variant" in base|head|activation-order-experiment|early-primary-experiment|sync-activation-experiment|legacy-activation-experiment|managed-primary-experiment) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
+case "$ym_qa_variant" in base|head|activation-order-experiment|early-primary-experiment|sync-activation-experiment|legacy-activation-experiment|managed-primary-experiment|combined-primary-activation-experiment|regular-policy-diagnostic-not-shippable) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
 ym_qa_stage_manager="unverified"
 if [[ "${YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED:-}" == true \
    && "$(/usr/bin/defaults read com.apple.WindowManager GloballyEnabled 2>/dev/null || true)" == 1 ]]; then
@@ -204,6 +204,18 @@ if [[ "${YM_QA_NATIVE_LAUNCH_DIAGNOSTIC:-false}" == true ]]; then
   fi
   sleep 4
   ym_qa_capture 14-native-cold-launch-result
+fi
+
+if [[ "${YM_QA_EXTRA_GROUP_SCENARIOS:-false}" == true ]]; then
+  ym_qa_group_status=0
+  /bin/bash "$ym_qa_source/manual-group-scenarios.sh" "$ym_qa_helpers" "$ym_qa_evidence/manual-group" \
+    "$ym_qa_evidence/control" "$ym_qa_yomado_pid" || ym_qa_group_status=$?
+  # Missing a genuine independent starting group is a recorded blocked test,
+  # never a pass. Other driver failures still stop the suite.
+  if [[ "$ym_qa_group_status" -ne 0 && "$ym_qa_group_status" -ne 78 ]]; then exit "$ym_qa_group_status"; fi
+  printf '{"exitCode":%s,"verdict":"requires-review-or-blocked-not-passed"}\n' "$ym_qa_group_status" > "$ym_qa_evidence/manual-group-result.json"
+  /bin/bash "$ym_qa_source/stage-manager-off-scenarios.sh" "$ym_qa_helpers" "$ym_qa_evidence/stage-manager-off" \
+    "$ym_qa_evidence/control" "$ym_qa_yomado_pid"
 fi
 
 # If the safety cap expired before the final capture, coverage is incomplete.

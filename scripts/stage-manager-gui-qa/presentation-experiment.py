@@ -31,5 +31,26 @@ elif variant == "managed-primary-experiment":
         | NSWindowCollectionBehaviorIgnoresCycle;""")
     replace("app/PanelPresentation.m", """        | NSWindowCollectionBehaviorPrimary;""", """        | NSWindowCollectionBehaviorPrimary | NSWindowCollectionBehaviorManaged
         | NSWindowCollectionBehaviorParticipatesInCycle;""")
+elif variant == "combined-primary-activation-experiment":
+    replace("app/Yomado.m", """        backing:NSBackingStoreBuffered defer:NO];
+    self.window.contentView = [[YMDocumentView alloc]""", """        backing:NSBackingStoreBuffered defer:YES];
+    self.window.collectionBehavior = NSWindowCollectionBehaviorPrimary;
+    self.window.contentView = [[YMDocumentView alloc]""")
+    replace("app/PanelPresentation.m", """    [NSApp activate];
+    [window makeKeyAndOrderFront:nil];
+    // Activation is cooperative/asynchronous on recent macOS. Explicit opening
+    // should still reveal the panel at normal level, without a focus-poll timer.
+    [window orderFrontRegardless];""", """    [window makeKeyAndOrderFront:nil];""")
+    replace("app/PanelPresentation.m", """    if (!window) return;
+    dispatch_async""", """    if (!window) return;
+    [NSApp activate];
+    dispatch_async""")
+elif variant == "regular-policy-diagnostic-not-shippable":
+    # Deliberately violates the no-Dock product requirement, solely to isolate
+    # whether the otherwise identical product is eligible as a regular app.
+    # This patch must never be copied to PR 2 or merged as a proposed fix.
+    replace("app/Yomado.m", """        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        ADController *controller = [[ADController alloc] init];""", """        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        ADController *controller = [[ADController alloc] init];""")
 else:
     raise SystemExit("Unknown experiment")
