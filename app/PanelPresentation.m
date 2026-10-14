@@ -78,10 +78,15 @@ YMPanelPlacement YMControlPanelPlacement(NSRect panelFrame,
 
 static void YMPresentControlPanelOnMainThread(NSWindow *window) {
     NSCAssert(NSThread.isMainThread, @"Panel presentation must run on the main thread.");
-    // Move this one normal window into the current Space when explicitly opened;
-    // do not float it or display copies across every Space.
-    window.collectionBehavior = (window.collectionBehavior & ~NSWindowCollectionBehaviorCanJoinAllSpaces)
-        | NSWindowCollectionBehaviorMoveToActiveSpace;
+    // The regular application identity and primary window role let Stage
+    // Manager give the panel its own group. MoveToActiveSpace keeps a window
+    // in the current center stage, so it must not accompany Primary.
+    // Keep the existing window; user-created groups remain managed by macOS.
+    NSWindowCollectionBehavior groupingFlags = NSWindowCollectionBehaviorCanJoinAllSpaces
+        | NSWindowCollectionBehaviorMoveToActiveSpace
+        | NSWindowCollectionBehaviorAuxiliary | NSWindowCollectionBehaviorCanJoinAllApplications;
+    window.collectionBehavior = (window.collectionBehavior & ~groupingFlags)
+        | NSWindowCollectionBehaviorPrimary;
     window.hidesOnDeactivate = NO;
 
     NSArray<NSScreen *> *screens = NSScreen.screens;
@@ -108,6 +113,10 @@ static void YMPresentControlPanelOnMainThread(NSWindow *window) {
 
 void YMPresentControlPanel(NSWindow *window) {
     if (!window) return;
+    // Request activation while handling the explicit open action. Deferring
+    // this first request can leave the panel behind another app's full-screen
+    // Space when automatic Space switching is disabled.
+    if (NSThread.isMainThread) [NSApp activate];
     dispatch_async(dispatch_get_main_queue(), ^{
         // A dispatched block can run inside a nested AppKit menu loop. Default
         // mode postpones presentation until tracking has actually finished.

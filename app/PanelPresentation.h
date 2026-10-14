@@ -25,8 +25,9 @@ FOUNDATION_EXPORT YMPanelPlacement YMControlPanelPlacement(
     NSUInteger screenCount, NSPoint pointerLocation);
 
 // Explicit open/reopen only; never call from inventory refresh or a timer.
-// Queues presentation on the main run loop after menu tracking. Only the passed
-// panel is repositioned; no displays or other applications are changed.
+// Requests activation immediately on the main thread, then queues presentation
+// after menu tracking. Only the passed panel is repositioned; no displays or
+// other applications are changed.
 FOUNDATION_EXPORT void YMPresentControlPanel(NSWindow * _Nullable window);
 
 NS_ASSUME_NONNULL_END
