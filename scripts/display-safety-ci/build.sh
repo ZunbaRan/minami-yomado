@@ -7,7 +7,7 @@ ym_ci_output="${2:?output path required}"
 ym_ci_tmp="$(mktemp -d "${TMPDIR:-/tmp}/yomado-display-ci-build.XXXXXX")"
 trap 'rm -rf "$ym_ci_tmp"' EXIT
 ym_ci_flags=(-fobjc-arc -Wall -Wextra -Werror -g0 -mmacosx-version-min=14.0 -I "$ym_ci_production/bridge" -I "$ym_ci_production/app")
-xcrun clang "${ym_ci_flags[@]}" -Dmain=YMUnusedApplicationMain -c "$ym_ci_production/app/Yomado.m" -o "$ym_ci_tmp/Yomado.o"
+xcrun clang "${ym_ci_flags[@]}" -c "$ym_ci_source/ControllerCIAdapter.m" -o "$ym_ci_tmp/Yomado.o"
 xcrun clang "${ym_ci_flags[@]}" "$ym_ci_source/DisplaySafetyCI.m" "$ym_ci_tmp/Yomado.o" \
   "$ym_ci_production/app/ControlUI.m" "$ym_ci_production/app/WindowRecovery.m" \
   "$ym_ci_production/app/UpdateChecker.m" "$ym_ci_production/app/MenuBarIcon.m" "$ym_ci_production/app/PanelPresentation.m" \

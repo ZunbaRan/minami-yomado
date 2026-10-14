@@ -11,7 +11,15 @@
 - (BOOL)canMoveIntoProfile:(id)profile;
 - (void)choose:(id)sender;
 - (NSMenu *)restoreMenu;
+- (void)create:(id)sender;
+- (void)stop:(id)sender;
+- (void)selectProfile:(id)profile;
+- (void)powerAssertions:(BOOL)on;
 @end
+
+extern id YMCIController(YMDisplayTopology *topology);
+extern id YMCIControllerAddProfile(id controller, VDVirtualDisplay *display, BOOL hiDPI);
+extern YMDisplayTopology *YMCIRejectingTopologyCreate(void);
 
 // Only this fixture pasteboard is read; the user's general clipboard is unused.
 @interface YMCIIncomingDrag : NSObject
@@ -219,8 +227,50 @@ static void RemoveAndRestore(YMDisplayTopology *topology, VDVirtualDisplay *d, Y
     BOOL ok = [topology restoreAndVerifySnapshot:baseline excludingDisplayID:removed error:&error];
     Check(label, ok, error.localizedDescription);
     Check([label stringByAppendingString:@"-independent-inventory"], Preserved(before, Inventory()), @"All earlier mode, origin, mirror, rotation, main and active fields must be identical.");
-    Check([label stringByAppendingString:@"-removed-offline"], !CGDisplayIsOnline(removed), nil);
+    Check([label stringByAppendingString:@"-removed-offline"], Row(Inventory(),removed)==nil, @"Removed ID absent from the authoritative online inventory; invalid-ID scalar APIs can return -1.");
     Observe(label);
+}
+static BOOL WaitForController(id controller) {
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:8.0];
+    while ([[controller valueForKey:@"displayOperationInProgress"] boolValue] && deadline.timeIntervalSinceNow>0) Pump(0.05);
+    return ![[controller valueForKey:@"displayOperationInProgress"] boolValue];
+}
+static VDVirtualDisplay *UncreatedFixture(void) {
+    VDVirtualDisplay *display=[[VDVirtualDisplay alloc] initWithSerialNumber:0x59440000+(uint32_t)Owned.count];
+    [Owned addObject:display]; return display;
+}
+static void CheckRealController(YMDisplayTopology *topology,NSArray *initialInventory) {
+    id controller=YMCIController(topology);
+    VDVirtualDisplay *first=UncreatedFixture(); id firstProfile=YMCIControllerAddProfile(controller,first,NO);
+    printf("STAGE real-controller-create-first\n"); [controller create:nil];
+    Check(@"controller-create-returns-with-verification-pending",[[controller valueForKey:@"displayOperationInProgress"] boolValue]&&![controller canMoveIntoProfile:firstProfile],nil);
+    Check(@"controller-real-create-completes",WaitForController(controller)&&[controller canMoveIntoProfile:firstProfile],nil);
+    Check(@"controller-real-create-preserves-initial",Preserved(initialInventory,Inventory()),nil); Observe(@"controller-first-created");
+    if (![controller canMoveIntoProfile:firstProfile]) @throw [NSException exceptionWithName:@"ControllerCreate" reason:@"first unavailable" userInfo:nil];
+    NSArray *beforeSecond=Inventory();
+    VDVirtualDisplay *second=UncreatedFixture(); id secondProfile=YMCIControllerAddProfile(controller,second,YES);
+    printf("STAGE real-controller-create-second\n"); [controller create:nil];
+    Check(@"controller-create-blocks-survivor-admission-until-complete",![controller canMoveIntoProfile:firstProfile],nil);
+    Check(@"controller-real-hidpi-create-completes",WaitForController(controller)&&[controller canMoveIntoProfile:secondProfile],nil);
+    Check(@"controller-real-hidpi-preserves-survivors",Preserved(beforeSecond,Inventory()),nil); Observe(@"controller-second-created");
+    CGDirectDisplayID removed=second.displayID;
+    printf("STAGE real-controller-stop-second\n"); [controller stop:nil];
+    Check(@"controller-real-stop-completes",WaitForController(controller)&&![controller valueForKey:@"topologyRecoverySnapshot"],nil);
+    Check(@"controller-real-stop-removes-only-second",Row(Inventory(),removed)==nil&&Preserved(beforeSecond,Inventory()),nil);
+    Check(@"controller-real-stop-restores-survivor-admission",[controller canMoveIntoProfile:firstProfile],nil); Observe(@"controller-second-removed");
+
+    id failing=YMCIController(YMCIRejectingTopologyCreate());
+    VDVirtualDisplay *rejected=UncreatedFixture(); id rejectedProfile=YMCIControllerAddProfile(failing,rejected,NO);
+    printf("STAGE real-controller-injected-failure\n"); [failing create:nil];
+    Check(@"controller-injected-failure-finishes-rollback",WaitForController(failing)&&!rejected.isCreated&&![failing valueForKey:@"topologyRecoverySnapshot"],nil);
+    Check(@"controller-injected-failure-rejects-admission",![failing canMoveIntoProfile:rejectedProfile],nil);
+    Check(@"controller-injected-failure-reports-original-error",[[failing valueForKey:@"fixtureErrors"] isEqual:@[@{@"domain":@"DisposableCIInjectedFailure",@"code":@901}]],nil);
+    Check(@"controller-injected-failure-preserves-baseline",[beforeSecond isEqual:Inventory()],nil); Observe(@"controller-failure-restored");
+
+    [controller selectProfile:firstProfile]; printf("STAGE real-controller-stop-first\n"); [controller stop:nil];
+    Check(@"controller-real-final-stop-completes",WaitForController(controller)&&!first.isCreated&&![controller valueForKey:@"topologyRecoverySnapshot"],nil);
+    Check(@"controller-real-final-stop-preserves-initial",[initialInventory isEqual:Inventory()],nil);
+    [controller powerAssertions:NO]; [failing powerAssertions:NO]; Observe(@"controller-all-removed");
 }
 static void CheckWorkspaceAdmissionUI(void) {
     YMAppWorkspaceView *view = [[YMAppWorkspaceView alloc] initWithFrame:NSMakeRect(0,0,360,203)];
@@ -299,7 +349,8 @@ int main(int argc, const char **argv) {
             NSData *data=[NSJSONSerialization dataWithJSONObject:probe options:NSJSONWritingSortedKeys error:NULL];
             fwrite(data.bytes,1,data.length,stdout); return 0;
         }
-        if (argc != 2) return 64;
+        if (argc != 2 && argc != 3) return 64;
+        BOOL mirrorScenario=argc==3 && strcmp(argv[2],"--mirror-only")==0;
         Evidence = [NSString stringWithUTF8String:argv[1]];
         [[NSFileManager defaultManager] createDirectoryAtPath:Evidence withIntermediateDirectories:YES attributes:nil error:nil];
         Checks = [NSMutableArray array]; Owned = [NSMutableArray array]; DispatchedEventKinds=[NSMutableArray array];
@@ -318,6 +369,7 @@ int main(int argc, const char **argv) {
         Observe(@"initial");
         @try {
             CheckWorkspaceAdmissionUI();
+            if (!mirrorScenario) CheckRealController(topology,initialIndependent);
             // Fixture A is an older output when target and sibling are added.
             VDVirtualDisplay *a = Make(1920,1080,NO); if (!a) @throw [NSException exceptionWithName:@"Fixture" reason:@"A missing" userInfo:nil];
             if (!Configure(topology,a,initial,@"setup-old-output")) @throw [NSException exceptionWithName:@"Fixture" reason:@"A unavailable" userInfo:nil];
@@ -344,6 +396,7 @@ int main(int argc, const char **argv) {
             RemoveAndRestore(topology,sibling,withTarget,beforeSibling,@"remove-sibling");
             Check(@"survivor-admission-kept",[controller canMoveIntoProfile:profile],nil);
 
+            if (mirrorScenario) {
             if (Mirror(target.displayID,a.displayID)) {
                 Observe(@"new-target-mirrored");
                 Check(@"admission-mirrored-target-rejected",![controller canMoveIntoProfile:profile],nil);
@@ -351,9 +404,11 @@ int main(int argc, const char **argv) {
                 Check(@"unmirror-preserved-original-independent",Preserved(before,Inventory()),nil);
                 Check(@"unmirror-admission-restored",[controller canMoveIntoProfile:profile],nil);
             } else Block(@"new-target-mirror-scenario",@"CoreGraphics did not establish the requested mirror relationship.");
+            }
             RemoveAndRestore(topology,target,baseline,before,@"remove-target");
             Check(@"admission-destroyed-target-rejected",![controller canMoveIntoProfile:profile],nil);
 
+            if (mirrorScenario) {
             // Preserve an existing mirror pair of fixtures, not the runner's own display.
             VDVirtualDisplay *b = Make(1920,1080,NO); if (!b) @throw [NSException exceptionWithName:@"Fixture" reason:@"B missing" userInfo:nil];
             Configure(topology,b,baseline,@"setup-existing-mirror-follower");
@@ -368,6 +423,7 @@ int main(int argc, const char **argv) {
                 }
             } else Block(@"existing-mirror-preservation-scenario",@"CoreGraphics did not establish fixture mirror pair.");
             RemoveAndRestore(topology,b,baseline,before,@"remove-mirror-fixture");
+            }
 
             VDVirtualDisplay *failed = Make(1920,1080,NO);
             if (failed) {
@@ -405,7 +461,8 @@ int main(int argc, const char **argv) {
         NSUInteger failed = 0, passed = 0;
         for (NSDictionary *r in Checks) if (r[@"passed"]) [r[@"passed"] boolValue] ? passed++ : failed++;
         Save(@"summary.json",@{@"passed":@(passed),@"failed":@(failed),@"blocked":@(Blocked),
-            @"realCoreGraphics":@YES,@"productionAdmissionMethod":@YES,@"productionViewCallbacks":@YES,@"realMouseDragGesture":@NO,@"displayLinkHardware":@NO,
+            @"scenario":mirrorScenario?@"mirror-only":@"ordinary-and-controller",@"mirrorFixturesExecuted":@(mirrorScenario),
+            @"productionCreateAndStop":@(!mirrorScenario),@"realCoreGraphics":@YES,@"productionAdmissionMethod":@YES,@"productionViewCallbacks":@YES,@"realMouseDragGesture":@NO,@"displayLinkHardware":@NO,
             @"localDesktopTouched":@NO,@"os":NSProcessInfo.processInfo.operatingSystemVersionString});
         return failed ? 1 : Blocked ? 78 : 0;
     }
