@@ -42,12 +42,42 @@ if CommandLine.arguments.last == "finish-onboarding" {
            (attr(button, kAXEnabledAttribute) as? NSNumber)?.boolValue == true { candidate = button; break }
         Thread.sleep(forTimeInterval: 0.25)
     }
-    guard let button = candidate else { fail("observed Turn On Stage Manager button unavailable or disabled") }
-    press(button); Thread.sleep(forTimeInterval: 2)
-    if onboardingButton() != nil {
-        fail("onboarding window remains after native action")
+    if let button = candidate {
+        press(button); Thread.sleep(forTimeInterval: 2)
+        if onboardingButton() != nil { fail("onboarding remains after native action") }
+        print("Completed observed Stage Manager onboarding with native AXPress"); exit(0)
     }
-    print("Completed observed Stage Manager onboarding with native AXPress"); exit(0)
+    // The system intro was visible but had no AX windows/buttons. The prior
+    // real 1024x768 capture showed exactly this 640x600 window at (192,84),
+    // with the Turn On button centered at (726,647). Permit only that observed
+    // geometry in the empty disposable guest; a changed layout must stop.
+    func observedIntro() -> [String: Any]? {
+        let all = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+        let matches = all.filter { item in
+            guard let b = item[kCGWindowBounds as String] as? [String: NSNumber] else { return false }
+            return abs((b["X"]?.doubleValue ?? -10000)-192)<2
+                && abs((b["Y"]?.doubleValue ?? -10000)-84)<2
+                && abs((b["Width"]?.doubleValue ?? 0)-640)<2
+                && abs((b["Height"]?.doubleValue ?? 0)-600)<2
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+    guard CGDisplayBounds(CGMainDisplayID()).size == CGSize(width: 1024, height: 768),
+          let intro = observedIntro() else { fail("AX unavailable and observed intro geometry does not match") }
+    let record = intro.filter { [kCGWindowOwnerName as String, kCGWindowOwnerPID as String,
+        kCGWindowName as String, kCGWindowBounds as String].contains($0.key) }
+    let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+    print("Observed intro mouse fallback: " + String(data: data, encoding: .utf8)!)
+    for _ in 0..<2 {
+        if observedIntro() == nil { break }
+        let point = CGPoint(x: 726, y: 647)
+        guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { fail("mouse event construction failed") }
+        down.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.08); up.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 2)
+    }
+    guard observedIntro() == nil else { fail("observed intro remains after bounded mouse action") }
+    print("Observed intro dismissed; actual regular-app grouping still requires visual verification"); exit(0)
 }
 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.controlcenter").first,
       AXIsProcessTrusted() else { fail("Control Center or AX unavailable") }

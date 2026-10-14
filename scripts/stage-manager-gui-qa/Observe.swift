@@ -161,10 +161,18 @@ if args.first == "system-ui" {
     for bundleID in ["com.apple.controlcenter", "com.apple.dock", "com.apple.systempreferences", "com.apple.WindowManager"] {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { continue }
         var budget = 1600
-        result.append(["bundleIdentifier": bundleID,
-            "tree": tree(AXUIElementCreateApplication(app.processIdentifier), depth: 12, budget: &budget)])
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        var windowBudget = 1600
+        result.append(["bundleIdentifier": bundleID, "pid": app.processIdentifier,
+            "tree": tree(root, depth: 12, budget: &budget),
+            "windows": elements(root, kAXWindowsAttribute).map { tree($0, depth: 12, budget: &windowBudget) }])
     }
-    writeJSON(["axTrusted": AXIsProcessTrusted(), "systemUI": result])
+    let cg = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+    let windows = cg.map { entry in
+        entry.filter { [kCGWindowOwnerName as String, kCGWindowOwnerPID as String, kCGWindowName as String,
+            kCGWindowNumber as String, kCGWindowBounds as String, kCGWindowLayer as String].contains($0.key) }
+    }
+    writeJSON(["axTrusted": AXIsProcessTrusted(), "systemUI": result, "onScreenWindowOwners": windows])
 } else if args.first == "pid", args.count == 2 {
     guard ownedBundleIDs.contains(args[1]),
           let app = NSRunningApplication.runningApplications(withBundleIdentifier: args[1]).first else { exit(1) }

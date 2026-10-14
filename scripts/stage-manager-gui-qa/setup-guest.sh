@@ -54,8 +54,13 @@ done
 /usr/bin/osascript -e 'tell application "System Events" to key code 53' \
   > "$ym_qa_evidence/control-center-dismiss.txt" 2> "$ym_qa_evidence/control-center-dismiss.stderr" || true
 "$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/before-onboarding-action-ax.json"
-"$ym_qa_helpers/stage-manager-action" finish-onboarding \
-  > "$ym_qa_evidence/onboarding-action.txt" 2> "$ym_qa_evidence/onboarding-action.stderr"
+/usr/sbin/screencapture -x "$ym_qa_evidence/before-onboarding-action.png"
+if ! "$ym_qa_helpers/stage-manager-action" finish-onboarding \
+  > "$ym_qa_evidence/onboarding-action.txt" 2> "$ym_qa_evidence/onboarding-action.stderr"; then
+  "$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/onboarding-failure-ax.json"
+  /usr/sbin/screencapture -x "$ym_qa_evidence/onboarding-failure.png"
+  exit 1
+fi
 "$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/after-onboarding-action-ax.json"
 /usr/sbin/screencapture -x "$ym_qa_evidence/after-onboarding-action.png"
 "$ym_qa_helpers/observe" > "$ym_qa_evidence/setup-final.json"
