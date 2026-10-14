@@ -1700,7 +1700,10 @@ int main(int argc, const char *argv[]) {
         if (argc > 3 && strcmp(argv[1], "--watchdog-test") == 0)
             return WatchdogTest([NSString stringWithUTF8String:argv[2]], [NSString stringWithUTF8String:argv[3]]);
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        // The interactive app needs a regular identity for independent Stage
+        // Manager grouping. Keep LSUIElement for the noninteractive modes above;
+        // the normal app shows both its Dock icon and the existing status item.
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         ADController *controller = [[ADController alloc] init];
         NSApp.delegate = controller;
         [NSApp run];

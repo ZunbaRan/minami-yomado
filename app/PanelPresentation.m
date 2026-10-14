@@ -78,9 +78,9 @@ YMPanelPlacement YMControlPanelPlacement(NSRect panelFrame,
 
 static void YMPresentControlPanelOnMainThread(NSWindow *window) {
     NSCAssert(NSThread.isMainThread, @"Panel presentation must run on the main thread.");
-    // Let Stage Manager treat the control panel as a primary window while the
-    // application remains an accessory (no Dock icon). MoveToActiveSpace keeps
-    // a window in the current center stage, so it must not accompany Primary.
+    // The regular application identity and primary window role let Stage
+    // Manager give the panel its own group. MoveToActiveSpace keeps a window
+    // in the current center stage, so it must not accompany Primary.
     // Keep the existing window; user-created groups remain managed by macOS.
     NSWindowCollectionBehavior groupingFlags = NSWindowCollectionBehaviorCanJoinAllSpaces
         | NSWindowCollectionBehaviorMoveToActiveSpace
