@@ -267,7 +267,9 @@ static BOOL YMWOrdinaryWindow(id element) {
 }
 - (BOOL)displayStillCurrent:(NSDictionary *)display {
     CGDirectDisplayID ID = [display[@"displayID"] unsignedIntValue];
-    if (!YMWorkspaceUsableDisplay(display) || !CGDisplayIsActive(ID)) return NO;
+    if (!YMWorkspaceUsableDisplay(display) || !CGDisplayIsActive(ID) || !CGDisplayIsOnline(ID)) return NO;
+    if ([self.ownedIDs containsObject:@(ID)] &&
+        (CGDisplayIsInMirrorSet(ID) || CGDisplayMirrorsDisplay(ID) != kCGNullDirectDisplay)) return NO;
     CGRect rect = CGDisplayBounds(ID);
     return YMWorkspaceSameFrame(display[@"bounds"], @{@"x": @(rect.origin.x), @"y": @(rect.origin.y),
         @"width": @(rect.size.width), @"height": @(rect.size.height)});
@@ -285,6 +287,7 @@ static BOOL YMWOrdinaryWindow(id element) {
         AXValueRef value = AXValueCreate(kAXValueCGSizeType, &size);
         if (value) { (void)AXUIElementSetAttributeValue(ref, kAXSizeAttribute, value); CFRelease(value); }
     }
+    if (![self displayStillCurrent:display]) return NO;
     CGPoint point = CGPointMake([frame[@"x"] doubleValue], [frame[@"y"] doubleValue]);
     AXValueRef value = AXValueCreate(kAXValueCGPointType, &point);
     AXError moved = value ? AXUIElementSetAttributeValue(ref, kAXPositionAttribute, value) : kAXErrorFailure;

@@ -5,6 +5,7 @@
 #import <dlfcn.h>
 #import <signal.h>
 #import "VDVirtualDisplay.h"
+#import "YMDisplayTopology.h"
 #import "LayoutPolicy.h"
 #import "DiagnosticPrivacy.h"
 #import "ControlUI.h"
@@ -123,6 +124,7 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @property NSUInteger height;
 @property BOOL hiDPI;
 @property VDVirtualDisplay *display;
+@property BOOL topologyVerified;
 @end
 @implementation YMManagedDisplay
 @end
@@ -164,6 +166,9 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 @property CGDirectDisplayID wechatDisplayID;
 @property BOOL updatingInventory;
 @property BOOL displayOperationInProgress;
+@property(nonatomic) YMDisplayTopology *displayTopology;
+@property YMDisplayTopologySnapshot *topologyRecoverySnapshot;
+@property CGDirectDisplayID topologyRecoveryRemovedID;
 @property BOOL appOperationInProgress;
 @property NSArray<NSDictionary *> *originalLayout;
 @property CGDirectDisplayID originalMain;
@@ -229,6 +234,42 @@ static NSView *YMSpacer(void) {
 @end
 
 @implementation ADController
+- (YMDisplayTopology *)displayTopology {
+    if (!_displayTopology) _displayTopology = [[YMDisplayTopology alloc] init];
+    return _displayTopology;
+}
+- (BOOL)canMoveIntoProfile:(YMManagedDisplay *)profile {
+    return profile && profile.topologyVerified && !self.topologyRecoverySnapshot && profile.display.isCreated &&
+        [self.displayTopology isExtendedTarget:profile.display.displayID width:profile.width height:profile.height hiDPI:profile.hiDPI];
+}
+- (void)reportTopologyError:(NSError *)error {
+    self.statusLabel.stringValue = @"显示配置未通过检查";
+    self.detailLabel.stringValue = error.localizedDescription ?: @"未能确认原有屏幕配置保持不变；已停止移入应用。";
+    if (!self.previewMode && self.window && !self.window.attachedSheet) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"工作屏未就绪";
+        alert.informativeText = self.detailLabel.stringValue;
+        [alert addButtonWithTitle:@"好"];
+        [self showWindow:nil];
+        [alert beginSheetModalForWindow:self.window completionHandler:nil];
+    }
+}
+- (BOOL)recoverTopology:(YMDisplayTopologySnapshot *)snapshot removedID:(CGDirectDisplayID)removedID error:(NSError **)error {
+    BOOL restored = [self.displayTopology restoreAndVerifySnapshot:snapshot excludingDisplayID:removedID error:error];
+    self.topologyRecoverySnapshot = restored ? nil : snapshot;
+    self.topologyRecoveryRemovedID = restored ? 0 : removedID;
+    return restored;
+}
+- (void)retryTopologyRecovery:(id)sender {
+    (void)sender;
+    if (!self.topologyRecoverySnapshot || self.displayOperationInProgress || self.appOperationInProgress) return;
+    self.displayOperationInProgress = YES;
+    NSError *error = nil;
+    BOOL restored = [self recoverTopology:self.topologyRecoverySnapshot removedID:self.topologyRecoveryRemovedID error:&error];
+    self.displayOperationInProgress = NO;
+    if (!restored) [self reportTopologyError:error];
+    [self updateInventory];
+}
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     if (self.previewMode) return;
     (void)notification;
@@ -336,7 +377,7 @@ static NSView *YMSpacer(void) {
 }
 - (void)addDisplay:(id)sender {
     (void)sender;
-    if (self.previewMode || self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.displayOperationInProgress || self.appOperationInProgress) return;
+    if (self.previewMode || self.topologyRecoverySnapshot || self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.displayOperationInProgress || self.appOperationInProgress) return;
     NSUInteger ordinal = 1;
     for (YMManagedDisplay *profile in self.displayProfiles) ordinal = MAX(ordinal, profile.ordinal + 1);
     if (ordinal > UINT16_MAX) { self.detailLabel.stringValue = @"已达到可用的屏幕编号上限。"; return; }
@@ -392,6 +433,8 @@ static NSView *YMSpacer(void) {
     [menu addItem:add];
     if (self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay)
         [menu addItem:[self menuItem:@"微信返回原显示器" action:@selector(wechatRestore:) profile:nil]];
+    if (self.topologyRecoverySnapshot)
+        [menu addItem:[self menuItem:@"重试恢复显示排列…" action:@selector(retryTopologyRecovery:) profile:nil]];
     if (self.armed || self.layoutChangedForTrial || self.recoveryRequested)
         [menu addItem:[self menuItem:@"恢复实体显示器" action:@selector(restore:) profile:nil]];
     [menu addItem:NSMenuItem.separatorItem];
@@ -770,6 +813,11 @@ static NSView *YMSpacer(void) {
 }
 - (void)dropApplication:(NSDictionary *)payload targetDisplayID:(CGDirectDisplayID)targetID {
     if (self.previewMode || self.armed || self.preparing || self.restoring || self.displayOperationInProgress || self.appOperationInProgress) return;
+    YMManagedDisplay *destinationProfile = [self profileForDisplayID:targetID];
+    if (destinationProfile && ![self canMoveIntoProfile:destinationProfile]) {
+        [self reportApplicationError:nil fallback:@"这个虚拟屏的扩展模式或显示配置尚未通过检查，未移动任何窗口。请先恢复显示排列。"];
+        return;
+    }
     self.appOperationInProgress = YES;
     @try {
         NSURL *URL = [payload[@"applicationURL"] isKindOfClass:NSURL.class] ? payload[@"applicationURL"] : nil;
@@ -914,6 +962,7 @@ static NSView *YMSpacer(void) {
         }
         BOOL trusted = self.previewMode ? YES : self.appWorkspace.accessibilityTrusted;
         view.statusText = @"";
+        view.acceptsApplications = self.previewMode || !profile || [self canMoveIntoProfile:profile];
         BOOL ready = !self.armed && !self.preparing && !self.restoring && !self.displayOperationInProgress && !self.appOperationInProgress;
         [view updateRows:rows virtualDisplayAvailable:ready accessibilityTrusted:trusted];
     }
@@ -971,8 +1020,8 @@ static NSView *YMSpacer(void) {
         }
         self.inventoryLabel.stringValue = [NSString stringWithFormat:@"%lu 块实体屏 · %lu 块虚拟屏", (unsigned long)physicalCount, (unsigned long)virtualCount];
         BOOL busy = self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested || self.displayOperationInProgress || self.appOperationInProgress;
-        self.addDisplayButton.enabled = !self.previewMode && !busy;
-        self.statusPill.text = busy ? @"正在更新" : virtualCount ? @"工作屏已就绪" : @"尚未启动";
+        self.addDisplayButton.enabled = !self.previewMode && !busy && !self.topologyRecoverySnapshot;
+        self.statusPill.text = busy ? @"正在更新" : self.topologyRecoverySnapshot ? @"显示排列待恢复" : virtualCount ? @"工作屏已就绪" : @"尚未启动";
         self.statusPill.tint = busy ? NSColor.systemOrangeColor : virtualCount ? NSColor.controlAccentColor : NSColor.secondaryLabelColor;
         if (self.previewMode) {
             self.permissionContainer.hidden = YES;
@@ -1034,87 +1083,50 @@ static NSView *YMSpacer(void) {
     if (err != kCGErrorSuccess) { CGCancelDisplayConfiguration(config); return NO; }
     return CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) == kCGErrorSuccess;
 }
-- (BOOL)placeDisplay:(VDVirtualDisplay *)display afterSnapshot:(NSArray<NSDictionary *> *)before mainDisplay:(CGDirectDisplayID)mainDisplay {
-    if (self.previewMode || !display.isCreated || !ADDisplayActive(display.displayID)) return NO;
-    NSNumber *right = YMDesktopRightEdge(before);
-    if (!right || !mainDisplay || !ADDisplayActive(mainDisplay)) return NO;
-    CGDisplayConfigRef config = NULL;
-    if (CGBeginDisplayConfiguration(&config) != kCGErrorSuccess || !config) return NO;
-    CGError error = kCGErrorSuccess;
-    // macOS can recall a cached virtual layout during creation. Restore only
-    // the exact origins captured immediately before this operation, including
-    // sibling virtual displays, then append the new one to the frozen edge.
-    for (NSDictionary *item in before) {
-        CGDirectDisplayID ident = [item[@"displayID"] unsignedIntValue];
-        if (![item[@"isActive"] boolValue] || !ADDisplayActive(ident)) continue;
-        error = CGConfigureDisplayOrigin(config, ident, [item[@"x"] intValue], [item[@"y"] intValue]);
-        if (error != kCGErrorSuccess) break;
-    }
-    if (error == kCGErrorSuccess) error = CGConfigureDisplayOrigin(config, display.displayID, right.intValue, 0);
-    if (error != kCGErrorSuccess) { CGCancelDisplayConfiguration(config); return NO; }
-    return CGCompleteDisplayConfiguration(config, kCGConfigureForAppOnly) == kCGErrorSuccess;
-}
-- (BOOL)layoutMatchesSnapshot:(NSArray<NSDictionary *> *)before mainDisplay:(CGDirectDisplayID)mainDisplay appended:(VDVirtualDisplay *)display {
-    if (CGMainDisplayID() != mainDisplay || !ADDisplayActive(display.displayID)) return NO;
-    NSNumber *right = YMDesktopRightEdge(before);
-    CGRect virtualBounds = CGDisplayBounds(display.displayID);
-    if (!right || virtualBounds.origin.x != right.doubleValue || virtualBounds.origin.y != 0) return NO;
-    for (NSDictionary *item in before) {
-        if (![item[@"isActive"] boolValue]) continue;
-        CGDirectDisplayID ident = [item[@"displayID"] unsignedIntValue];
-        CGRect bounds = CGDisplayBounds(ident);
-        if (!ADDisplayActive(ident) || bounds.origin.x != [item[@"x"] doubleValue] || bounds.origin.y != [item[@"y"] doubleValue]) return NO;
-    }
-    return YES;
-}
 - (void)create:(id)sender {
     (void)sender;
-    if (self.previewMode || self.virtualDisplay.isCreated || !self.selectedProfile || self.displayOperationInProgress || self.appOperationInProgress
-        || self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return;
+    if (self.previewMode || self.topologyRecoverySnapshot || self.virtualDisplay.isCreated || !self.selectedProfile
+        || self.displayOperationInProgress || self.appOperationInProgress || self.armed || self.preparing
+        || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return;
     YMManagedDisplay *profile = self.selectedProfile;
-    NSArray<NSDictionary *> *before = DisplaySnapshot();
-    CGDirectDisplayID previousMain = CGMainDisplayID();
-    if (!YMDesktopRightEdge(before)) {
-        self.detailLabel.stringValue = @"没有可用的桌面排列，暂时无法创建工作屏。"; return;
-    }
+    profile.topologyVerified = NO;
     self.displayOperationInProgress = YES;
     NSError *error = nil;
-    if (![profile.display createWithWidth:profile.width height:profile.height hiDPI:profile.hiDPI
-                     name:[self titleForProfile:profile] error:&error]) {
+    YMDisplayTopologySnapshot *before = [self.displayTopology captureSnapshotWithError:&error];
+    if (!before) {
         self.displayOperationInProgress = NO;
-        self.statusLabel.stringValue = @"虚拟屏创建失败";
-        [self reportApplicationError:error fallback:@"系统未能创建这个虚拟屏。"];
+        [self reportTopologyError:error];
         [self updateInventory];
         return;
     }
-    [self powerAssertions:YES];
-    if (self.systemAssertion == kIOPMNullAssertionID || self.displayAssertion == kIOPMNullAssertionID) {
+    BOOL created = [profile.display createWithWidth:profile.width height:profile.height hiDPI:profile.hiDPI
+                     name:[self titleForProfile:profile] error:&error];
+    BOOL configured = created && [self.displayTopology configureAndVerifyNewDisplay:profile.display.displayID
+        width:profile.width height:profile.height hiDPI:profile.hiDPI baseline:before error:&error];
+    if (configured) {
+        [self powerAssertions:YES];
+        configured = self.systemAssertion != kIOPMNullAssertionID && self.displayAssertion != kIOPMNullAssertionID;
+        if (!configured) error = [NSError errorWithDomain:YMDisplayTopologyErrorDomain code:50
+            userInfo:@{NSLocalizedDescriptionKey:@"保持唤醒请求失败，已取消创建工作屏。"}];
+    }
+    if (!configured) {
+        // Only this operation's owned object is removed. No sibling or external
+        // display is destroyed, and no application was admitted to this target.
+        CGDirectDisplayID removedID = profile.display.displayID;
+        if (profile.display.isCreated) [profile.display destroy];
+        NSError *recoveryError = nil;
+        BOOL recovered = [self recoverTopology:before removedID:removedID error:&recoveryError];
+        if (![self activeProfiles].count) [self powerAssertions:NO];
         self.displayOperationInProgress = NO;
-        [self stop:nil];
-        self.statusLabel.stringValue = @"保持唤醒请求失败，未启用关屏";
+        [self reportTopologyError:recovered ? error : recoveryError];
+        [self updateInventory];
         return;
     }
-    [self placeDisplay:profile.display afterSnapshot:before mainDisplay:previousMain];
+    profile.topologyVerified = YES;
     [self saveDisplayProfiles];
+    self.displayOperationInProgress = NO;
     self.statusLabel.stringValue = [NSString stringWithFormat:@"%@ 已启动", [self titleForProfile:profile]];
-    // WindowServer can restore a cached origin shortly after creation. Capture
-    // this exact object, never whichever profile the user selects next.
-    VDVirtualDisplay *createdDisplay = profile.display;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (createdDisplay.isCreated && !self.armed && !self.preparing) {
-            if (![self placeDisplay:createdDisplay afterSnapshot:before mainDisplay:previousMain])
-                self.detailLabel.stringValue = @"虚拟屏已创建，但恢复创建前的排列未完成。请在系统显示器设置中确认。";
-        }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
-            if (createdDisplay.isCreated && ![self layoutMatchesSnapshot:before mainDisplay:previousMain appended:createdDisplay]) {
-                self.statusLabel.stringValue = @"工作屏已创建 · 排列需要检查";
-                self.detailLabel.stringValue = @"未能确认原有屏幕位置与主屏保持不变。请先检查系统显示器排列，再移入应用。";
-            }
-            self.displayOperationInProgress = NO;
-            [self updateInventory];
-        });
-    });
-    self.detailLabel.stringValue = @"把应用图标拖进屏幕；点击屏幕的「…」可命名或关闭。";
+    self.detailLabel.stringValue = @"扩展模式与原有显示配置已核对，可以移入应用。";
     [self updateInventory];
 }
 - (BOOL)writeStateEnding:(BOOL)end {
@@ -1159,7 +1171,7 @@ static NSView *YMSpacer(void) {
     if (self.previewMode) return;
     (void)sender;
     if ([self activeProfiles].count != 1 || self.displayOperationInProgress || self.appOperationInProgress || self.armed || self.preparing || self.restoring || self.recoveryRequested || self.layoutChangedForTrial
-        || !self.virtualDisplay.isCreated || !ADDisplayActive(self.virtualDisplay.displayID)) return;
+        || ![self canMoveIntoProfile:self.selectedProfile]) return;
     CGDirectDisplayID target = [self.physicalChoice.selectedItem.representedObject unsignedIntValue];
     if (!target || target == self.virtualDisplay.displayID || [VDVirtualDisplay isVirtualDisplay:target]) return;
     if (CGDisplayIsInMirrorSet(target)) {
@@ -1375,6 +1387,7 @@ static NSView *YMSpacer(void) {
 - (void)stop:(id)sender {
     (void)sender;
     if (self.previewMode || self.displayOperationInProgress || self.appOperationInProgress) return;
+    if (self.topologyRecoverySnapshot) { [self retryTopologyRecovery:nil]; if (self.topologyRecoverySnapshot) return; }
     if (self.armed || self.preparing || self.layoutChangedForTrial) [self restore:nil];
     if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return;
     VDVirtualDisplay *closing = self.virtualDisplay;
@@ -1398,11 +1411,27 @@ static NSView *YMSpacer(void) {
         return;
     }
     self.displayOperationInProgress = YES;
+    NSError *topologyError = nil;
+    YMDisplayTopologySnapshot *before = [self.displayTopology captureSnapshotWithError:&topologyError];
+    CGDirectDisplayID removedID = closing.displayID;
+    YMDisplayTopologySnapshot *survivors = [before snapshotByExcludingDisplayID:removedID];
+    if (!survivors) {
+        self.displayOperationInProgress = NO;
+        [self reportTopologyError:topologyError];
+        return;
+    }
     [self finishWatchdog];
+    self.selectedProfile.topologyVerified = NO;
     [closing destroy];
+    BOOL recovered = [self recoverTopology:survivors removedID:removedID error:&topologyError];
     self.displayOperationInProgress = NO;
     if (![self activeProfiles].count) [self powerAssertions:NO];
     if (self.wechatDisplayID && ![self profileForDisplayID:self.wechatDisplayID]) self.wechatDisplayID = 0;
+    if (!recovered) {
+        [self reportTopologyError:topologyError];
+        [self updateInventory];
+        return;
+    }
     self.statusLabel.stringValue = @"所选虚拟屏已关闭";
     self.detailLabel.stringValue = @"其他工作屏继续运行。已关闭的屏幕保留名称，可再次启动。";
     [self updateInventory];
@@ -1412,6 +1441,7 @@ static NSView *YMSpacer(void) {
     if (self.previewMode) return NSTerminateNow;
     (void)sender;
     if (self.displayOperationInProgress || self.appOperationInProgress) return NSTerminateCancel;
+    if (self.topologyRecoverySnapshot) { [self retryTopologyRecovery:nil]; if (self.topologyRecoverySnapshot) return NSTerminateCancel; }
     if (self.armed || self.preparing || self.layoutChangedForTrial) [self restore:nil];
     if (self.armed || self.preparing || self.restoring || self.layoutChangedForTrial || self.recoveryRequested) return NSTerminateCancel;
     NSArray<YMManagedDisplay *> *active = [self activeProfiles];
@@ -1425,7 +1455,7 @@ static NSView *YMSpacer(void) {
     for (YMManagedDisplay *profile in active) {
         [self selectProfile:profile];
         [self stop:nil];
-        if (profile.display.isCreated) { [self showWindow:nil]; return NSTerminateCancel; }
+        if (profile.display.isCreated || self.topologyRecoverySnapshot) { [self showWindow:nil]; return NSTerminateCancel; }
     }
     if (self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay) { [self showWindow:nil]; return NSTerminateCancel; }
     [self writeStateEnding:YES];
