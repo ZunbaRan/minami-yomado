@@ -1,0 +1,53 @@
+{
+  "productionHead": "3776ed9c5ec1fb49260bf3400da1492210dfa091",
+  "qaHead": "5b33beaac5e5de5c88e5f4b6497fbbd6c73695fd",
+  "run": "https://github.com/chekusu/yomado/actions/runs/38516093493",
+  "os": "macOS 26.6.2 (25G83)",
+  "display": "1024 x 768, scale 1, one hosted display",
+  "localUserGUIUsed": false,
+  "experimentalPatchApplied": false,
+  "guests": {
+    "regular-default-spaces": {
+      "spaceSetting": {
+        "afterValue": 1,
+        "beforeValue": 1,
+        "mode": "default",
+        "role": "AXCheckBox",
+        "source": "actual System Settings accessibility checkbox"
+      },
+      "structuralPassed": 37,
+      "dockIdentity": {
+        "pid": 3222,
+        "window": 84
+      },
+      "trueMinimizeIdentity": {
+        "pid": 5538,
+        "window": 236
+      },
+      "timelineSamples": 881,
+      "timelineMaxIntervalMS": 3237.7733333333367,
+      "startupPolicyObservations": []
+    },
+    "regular-no-auto-spaces": {
+      "spaceSetting": {
+        "afterValue": 0,
+        "beforeValue": 1,
+        "mode": "off",
+        "role": "AXCheckBox",
+        "source": "actual System Settings accessibility checkbox"
+      },
+      "structuralPassed": 37,
+      "dockIdentity": {
+        "pid": 4628,
+        "window": 83
+      },
+      "trueMinimizeIdentity": {
+        "pid": 6936,
+        "window": 229
+      },
+      "timelineSamples": 882,
+      "timelineMaxIntervalMS": 428.06091666665225,
+      "startupPolicyObservations": []
+    }
+  }
+}
