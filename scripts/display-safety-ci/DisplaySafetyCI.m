@@ -90,13 +90,66 @@ static void Observe(NSString *label) {
         @{@"displays":Inventory(), @"fixtureWindowFrame":NSStringFromRect(FixtureWindow.frame),
           @"fixtureWindowUnchanged":@(NSEqualRects(InitialWindowFrame, FixtureWindow.frame))});
 }
+static NSDictionary *ModeFacts(CGDisplayModeRef mode) {
+    return @{@"width":@(CGDisplayModeGetWidth(mode)), @"height":@(CGDisplayModeGetHeight(mode)),
+        @"pixelWidth":@(CGDisplayModeGetPixelWidth(mode)), @"pixelHeight":@(CGDisplayModeGetPixelHeight(mode)),
+        @"refresh":@(CGDisplayModeGetRefreshRate(mode)), @"flags":@(CGDisplayModeGetIOFlags(mode)),
+        @"id":@(CGDisplayModeGetIODisplayModeID(mode))};
+}
+static NSDictionary *ProbeModeAvailability(CGDirectDisplayID d) {
+    CGRect bounds=CGDisplayBounds(d);
+    CGDisplayModeRef current=CGDisplayCopyDisplayMode(d);
+    CFArrayRef modes=CGDisplayCopyAllDisplayModes(d,(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes:@YES});
+    NSMutableArray *described=[NSMutableArray array];
+    CFIndex count=modes ? CFArrayGetCount(modes) : 0;
+    for (CFIndex i=0; i<MIN(count,128); i++) [described addObject:ModeFacts((CGDisplayModeRef)CFArrayGetValueAtIndex(modes,i))];
+    NSMutableDictionary *result=[@{@"displayID":@(d),@"active":@(CGDisplayIsActive(d)),@"online":@(CGDisplayIsOnline(d)),
+        @"currentModeAvailable":@(current!=NULL),@"allModesListAvailable":@(modes!=NULL),@"allModesCount":@(count),
+        @"allModes":described,@"bounds":@{@"x":@(bounds.origin.x),@"y":@(bounds.origin.y),@"width":@(bounds.size.width),@"height":@(bounds.size.height)},
+        @"pixelWidth":@(CGDisplayPixelsWide(d)),@"pixelHeight":@(CGDisplayPixelsHigh(d))} mutableCopy];
+    if (current) { result[@"currentMode"]=ModeFacts(current); CGDisplayModeRelease(current); }
+    if (modes) CFRelease(modes);
+    return result;
+}
+static NSDictionary *FreshProcessModeProbe(CGDirectDisplayID d) {
+    NSTask *task=[NSTask new];
+    task.executableURL=[NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments.firstObject];
+    task.arguments=@[@"--probe-modes",[@(d) stringValue]];
+    NSString *probePath=[Evidence stringByAppendingPathComponent:[NSString stringWithFormat:@"fresh-process-mode-%u.json",d]];
+    [[NSFileManager defaultManager] createFileAtPath:probePath contents:nil attributes:nil];
+    NSFileHandle *capture=[NSFileHandle fileHandleForWritingAtPath:probePath];
+    task.standardOutput=capture; task.standardError=NSFileHandle.fileHandleWithNullDevice;
+    NSError *error=nil;
+    if (![task launchAndReturnError:&error]) { [capture closeFile]; return @{@"launched":@NO,@"errorCode":@(error.code)}; }
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:3.0];
+    while(task.running && deadline.timeIntervalSinceNow>0) Pump(0.05);
+    if(task.running) { [task terminate]; [capture closeFile]; return @{@"launched":@YES,@"timedOut":@YES}; }
+    [capture closeFile]; NSData *data=[NSData dataWithContentsOfFile:probePath];
+    id decoded=data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+    return @{@"launched":@YES,@"status":@(task.terminationStatus),@"probe":[decoded isKindOfClass:NSDictionary.class]?decoded:@{}};
+}
 static VDVirtualDisplay *Make(NSUInteger w, NSUInteger h, BOOL hidpi) {
     VDVirtualDisplay *d = [[VDVirtualDisplay alloc] initWithSerialNumber:0x59430000 + (uint32_t)Owned.count + Sequence * 19];
     [Owned addObject:d]; NSError *error = nil;
     if (![d createWithWidth:w height:h hiDPI:hidpi name:@"yomado disposable CI fixture" error:&error]) {
         Check(@"private-api-create", NO, error.localizedDescription); return nil;
     }
-    Pump(0.5); return d;
+    // A mode may become readable after the online/active flags. Observe for a
+    // bounded five seconds without changing production behavior or pretending
+    // the available-mode list is the selected current mode.
+    NSTimeInterval start=NSProcessInfo.processInfo.systemUptime;
+    NSMutableArray *samples=[NSMutableArray array]; NSDictionary *last=nil;
+    do {
+        last=ProbeModeAvailability(d.displayID);
+        [samples addObject:@{@"elapsed":@(NSProcessInfo.processInfo.systemUptime-start),@"probe":last}];
+        if ([last[@"currentModeAvailable"] boolValue] && NSProcessInfo.processInfo.systemUptime-start>=0.5) break;
+        Pump(0.2);
+    } while(NSProcessInfo.processInfo.systemUptime-start<5.0);
+    NSMutableDictionary *diagnostic=[@{@"requestedWidth":@(w),@"requestedHeight":@(h),@"hiDPI":@(hidpi),@"samples":samples} mutableCopy];
+    if (![last[@"currentModeAvailable"] boolValue]) diagnostic[@"freshProcess"]=FreshProcessModeProbe(d.displayID);
+    diagnostic[@"inventory"]=Inventory();
+    Save([NSString stringWithFormat:@"mode-availability-%lu.json",(unsigned long)Owned.count],diagnostic);
+    return d;
 }
 static BOOL Mirror(CGDirectDisplayID follower, CGDirectDisplayID root) {
     CGDisplayConfigRef config = NULL;
@@ -204,9 +257,15 @@ static void CheckWorkspaceAdmissionUI(void) {
 int main(int argc, const char **argv) {
     @autoreleasepool {
         NSDictionary *environment = NSProcessInfo.processInfo.environment;
-        if (![environment[@"GITHUB_ACTIONS"] isEqual:@"true"] || ![environment[@"RUNNER_ENVIRONMENT"] isEqual:@"github-hosted"] || argc != 2) {
+        if (![environment[@"GITHUB_ACTIONS"] isEqual:@"true"] || ![environment[@"RUNNER_ENVIRONMENT"] isEqual:@"github-hosted"]) {
             fprintf(stderr, "REFUSED: only disposable GitHub-hosted macOS may execute display QA.\n"); return 64;
         }
+        if (argc == 3 && strcmp(argv[1],"--probe-modes") == 0) {
+            CGDirectDisplayID d=(CGDirectDisplayID)strtoul(argv[2],NULL,10);
+            NSData *data=[NSJSONSerialization dataWithJSONObject:ProbeModeAvailability(d) options:NSJSONWritingSortedKeys error:NULL];
+            fwrite(data.bytes,1,data.length,stdout); return 0;
+        }
+        if (argc != 2) return 64;
         Evidence = [NSString stringWithUTF8String:argv[1]];
         [[NSFileManager defaultManager] createDirectoryAtPath:Evidence withIntermediateDirectories:YES attributes:nil error:nil];
         Checks = [NSMutableArray array]; Owned = [NSMutableArray array];
@@ -226,12 +285,12 @@ int main(int argc, const char **argv) {
         @try {
             CheckWorkspaceAdmissionUI();
             // Fixture A is an older output when target and sibling are added.
-            VDVirtualDisplay *a = Make(1280,720,NO); if (!a) @throw [NSException exceptionWithName:@"Fixture" reason:@"A missing" userInfo:nil];
+            VDVirtualDisplay *a = Make(1920,1080,NO); if (!a) @throw [NSException exceptionWithName:@"Fixture" reason:@"A missing" userInfo:nil];
             if (!Configure(topology,a,initial,@"setup-old-output")) @throw [NSException exceptionWithName:@"Fixture" reason:@"A unavailable" userInfo:nil];
             Check(@"setup-preserved-original",Preserved(initialIndependent,Inventory()),nil);
             YMDisplayTopologySnapshot *baseline = [topology captureSnapshotWithError:&error];
             NSArray *before = Inventory();
-            VDVirtualDisplay *target = Make(1280,720,NO); if (!target) @throw [NSException exceptionWithName:@"Fixture" reason:@"target missing" userInfo:nil];
+            VDVirtualDisplay *target = Make(1920,1080,NO); if (!target) @throw [NSException exceptionWithName:@"Fixture" reason:@"target missing" userInfo:nil];
             id controller = [[NSClassFromString(@"ADController") alloc] init];
             [controller setValue:topology forKey:@"displayTopology"];
             id profile = Profile(target);
@@ -245,7 +304,7 @@ int main(int argc, const char **argv) {
             [controller setValue:nil forKey:@"topologyRecoverySnapshot"];
             YMDisplayTopologySnapshot *withTarget = [topology captureSnapshotWithError:&error];
             NSArray *beforeSibling = Inventory();
-            VDVirtualDisplay *sibling = Make(960,540,YES); if (!sibling) @throw [NSException exceptionWithName:@"Fixture" reason:@"sibling missing" userInfo:nil];
+            VDVirtualDisplay *sibling = Make(1920,1080,YES); if (!sibling) @throw [NSException exceptionWithName:@"Fixture" reason:@"sibling missing" userInfo:nil];
             Configure(topology,sibling,withTarget,@"append-hidpi-sibling");
             Check(@"sibling-preserved-independent",Preserved(beforeSibling,Inventory()),nil);
             RemoveAndRestore(topology,sibling,withTarget,beforeSibling,@"remove-sibling");
@@ -262,12 +321,12 @@ int main(int argc, const char **argv) {
             Check(@"admission-destroyed-target-rejected",![controller canMoveIntoProfile:profile],nil);
 
             // Preserve an existing mirror pair of fixtures, not the runner's own display.
-            VDVirtualDisplay *b = Make(1280,720,NO); if (!b) @throw [NSException exceptionWithName:@"Fixture" reason:@"B missing" userInfo:nil];
+            VDVirtualDisplay *b = Make(1920,1080,NO); if (!b) @throw [NSException exceptionWithName:@"Fixture" reason:@"B missing" userInfo:nil];
             Configure(topology,b,baseline,@"setup-existing-mirror-follower");
             if (Mirror(b.displayID,a.displayID)) {
                 YMDisplayTopologySnapshot *mirrored = [topology captureSnapshotWithError:&error]; NSArray *mirrorBefore = Inventory();
                 Observe(@"preexisting-mirror-baseline");
-                VDVirtualDisplay *third = Make(800,600,NO);
+                VDVirtualDisplay *third = Make(1920,1080,NO);
                 if (third) {
                     Configure(topology,third,mirrored,@"append-preserves-preexisting-mirror");
                     Check(@"existing-mirror-unchanged-independent",Preserved(mirrorBefore,Inventory()),nil);
@@ -276,7 +335,7 @@ int main(int argc, const char **argv) {
             } else Block(@"existing-mirror-preservation-scenario",@"CoreGraphics did not establish fixture mirror pair.");
             RemoveAndRestore(topology,b,baseline,before,@"remove-mirror-fixture");
 
-            VDVirtualDisplay *failed = Make(800,600,NO);
+            VDVirtualDisplay *failed = Make(1920,1080,NO);
             if (failed) {
                 Configure(topology,failed,baseline,@"before-deliberate-drift");
                 YMDisplayTopologySnapshot *driftBaseline = [topology captureSnapshotWithError:&error];
@@ -288,12 +347,12 @@ int main(int argc, const char **argv) {
                 Observe(@"deliberate-drift-before-rollback");
                 RemoveAndRestore(topology,failed,baseline,before,@"rollback-after-validation-drift");
             }
-            VDVirtualDisplay *wrong = Make(800,600,NO);
+            VDVirtualDisplay *wrong = Make(1920,1080,NO);
             if (wrong) {
                 error = nil;
-                BOOL accepted = [topology configureAndVerifyNewDisplay:wrong.displayID width:801 height:600 hiDPI:NO baseline:baseline error:&error];
+                BOOL accepted = [topology configureAndVerifyNewDisplay:wrong.displayID width:1921 height:1080 hiDPI:NO baseline:baseline error:&error];
                 Check(@"incorrect-expected-dimensions-rejected",!accepted,error.localizedDescription);
-                id wrongProfile = Profile(wrong); [wrongProfile setValue:@801 forKey:@"width"]; [wrongProfile setValue:@YES forKey:@"topologyVerified"];
+                id wrongProfile = Profile(wrong); [wrongProfile setValue:@1921 forKey:@"width"]; [wrongProfile setValue:@YES forKey:@"topologyVerified"];
                 Check(@"admission-wrong-live-dimensions-rejected",![controller canMoveIntoProfile:wrongProfile],nil);
                 RemoveAndRestore(topology,wrong,baseline,before,@"rollback-after-dimension-mismatch");
             }
