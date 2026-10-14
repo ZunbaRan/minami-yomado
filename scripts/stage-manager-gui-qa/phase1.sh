@@ -7,7 +7,7 @@ ym_qa_app="${1:?Usage: phase1.sh Yomado.app helper-directory evidence-directory 
 ym_qa_helpers="${2:?missing helper-directory}"
 ym_qa_evidence="${3:?missing evidence-directory}"
 ym_qa_variant="${4:?missing variant}"
-case "$ym_qa_variant" in base|head) ;; *) printf 'Expected variant base or head.\n' >&2; exit 64;; esac
+case "$ym_qa_variant" in base|head|activation-order-experiment) ;; *) printf 'Unknown QA variant.\n' >&2; exit 64;; esac
 ym_qa_stage_manager="unverified"
 if [[ "${YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED:-}" == true \
    && "$(/usr/bin/defaults read com.apple.WindowManager GloballyEnabled 2>/dev/null || true)" == 1 ]]; then
@@ -75,7 +75,7 @@ APPLESCRIPT
 }
 
 "$ym_qa_helpers/observe" > "$ym_qa_evidence/00-before.json"
-YM_QA_CONTROL_DIRECTORY="$ym_qa_evidence/control" \
+YM_QA_CONTROL_DIRECTORY="$ym_qa_evidence/control" YM_QA_PRODUCT_APP="$ym_qa_app" \
   "$ym_qa_helpers/Companion.app/Contents/MacOS/Companion" > "$ym_qa_evidence/companion.jsonl" 2> "$ym_qa_evidence/companion.stderr" &
 ym_qa_companion_pid=$!
 sleep 3
@@ -100,7 +100,7 @@ sleep 1
 
 ym_qa_stop_file="$ym_qa_evidence/control/dock-observer.stop"
 /bin/rm -f "$ym_qa_stop_file"
-"$ym_qa_helpers/observe" timeline 180 "$ym_qa_stop_file" > "$ym_qa_evidence/dock-timeline.jsonl" &
+"$ym_qa_helpers/observe" timeline 240 "$ym_qa_stop_file" > "$ym_qa_evidence/dock-timeline.jsonl" &
 ym_qa_observer_pid=$!
 # Wait for the first complete, flushed observation before launching Yomado.
 # Starting a background process alone is not a pre-launch observation.
@@ -114,7 +114,8 @@ if [[ "$ym_qa_ready" != true ]]; then
   printf '%s\n' 'Dock observer did not produce its first sample; refusing an unobserved launch.' >&2
   exit 1
 fi
-# Match the normal user's initial application launch through LaunchServices.
+# Keep the original CLI LaunchServices baseline; the optional terminal
+# diagnostic separately measures an active native app's launch handoff.
 # No preexisting Yomado instance was allowed, so this PID belongs to this run.
 /usr/bin/open -n "$ym_qa_app"
 for ym_qa_attempt in {1..100}; do
@@ -174,6 +175,36 @@ ym_qa_capture 11-final
 
 /bin/bash "$ym_qa_source/desktop-scenarios.sh" "$ym_qa_app" "$ym_qa_helpers" \
   "$ym_qa_evidence/desktops" "$ym_qa_yomado_pid"
+
+if [[ "${YM_QA_NATIVE_LAUNCH_DIAGNOSTIC:-false}" == true ]]; then
+  # This extra scenario begins only after all baseline scenarios are captured.
+  # The existing owned production process is the only application terminated.
+  ym_qa_capture 12-native-launch-before-restart
+  kill -TERM "$ym_qa_yomado_pid"
+  for ym_qa_attempt in {1..100}; do
+    if ! kill -0 "$ym_qa_yomado_pid" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  if kill -0 "$ym_qa_yomado_pid" 2>/dev/null; then
+    printf '%s\n' 'Owned Yomado did not terminate for the separate cold-launch diagnostic.' >&2
+    exit 1
+  fi
+  ym_qa_yomado_pid=""
+  ym_qa_companion_command show
+  sleep 2
+  ym_qa_capture 13-native-launch-active-companion
+  ym_qa_companion_command launch-product
+  for ym_qa_attempt in {1..100}; do
+    if ym_qa_yomado_pid="$("$ym_qa_helpers/observe" pid dev.chekusu.yomado 2>/dev/null)"; then break; fi
+    sleep 0.1
+  done
+  if [[ -z "$ym_qa_yomado_pid" ]]; then
+    printf '%s\n' 'Native Companion launch did not produce the expected Yomado process.' >&2
+    exit 1
+  fi
+  sleep 4
+  ym_qa_capture 14-native-cold-launch-result
+fi
 
 # If the safety cap expired before the final capture, coverage is incomplete.
 kill -0 "$ym_qa_observer_pid"

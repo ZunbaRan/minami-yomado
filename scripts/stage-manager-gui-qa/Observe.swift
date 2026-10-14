@@ -178,7 +178,7 @@ if args.first == "system-ui" {
           let app = NSRunningApplication.runningApplications(withBundleIdentifier: args[1]).first else { exit(1) }
     print(app.processIdentifier)
 } else if args.first == "timeline" {
-    let duration = min(180, max(1, Double(args.dropFirst().first ?? "15") ?? 15))
+    let duration = min(240, max(1, Double(args.dropFirst().first ?? "15") ?? 15))
     let stopFile = args.count > 2 ? args[2] : nil
     let start = ProcessInfo.processInfo.systemUptime
     var previousSampleStart: Double?

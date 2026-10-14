@@ -5,6 +5,10 @@ must never be run on a person's desktop. Every entry point checks
 `GITHUB_ACTIONS=true` and `RUNNER_ENVIRONMENT=github-hosted`; no helper requests
 or modifies Accessibility or Screen Recording permission.
 
+The base and head jobs build exact revisions. A separately labeled
+`activation-order-experiment` job applies and saves one explicit presentation
+patch for comparison; its evidence is not attributed to the unchanged PR head.
+
 Build the production base and PR revisions without changing their bundle IDs,
 activation policy, window classes, or launch path. Build the helpers with
 `build-helpers.sh <helper-directory>`. The helper compilation and every GUI
@@ -56,7 +60,7 @@ it is not a guaranteed 10 Hz observation rate. Absence from readable samples
 does not prove that an icon never appeared between samples. The production
 app's activation policy is recorded alongside those samples.
 Sampling continues until a stop file is written after the final screenshot,
-with a 180-second safety limit. A limit reached before the final capture is
+with a 240-second safety limit. A limit reached before the final capture is
 incomplete evidence. Compare the final snapshot's monotonic timestamp with
 the timeline's sample and termination timestamps when reviewing coverage.
 

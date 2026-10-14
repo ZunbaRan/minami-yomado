@@ -52,8 +52,8 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.makeKeyAndOrderFront(nil)
     }
 
-    func record(_ event: String) {
-        let object: [String: Any] = ["event": event,
+    func record(_ event: String, details: [String: Any] = [:]) {
+        var object: [String: Any] = ["event": event,
             "timestamp": ISO8601DateFormatter().string(from: Date()),
             "windowNumber": window.windowNumber,
             "bundleIdentifier": Bundle.main.bundleIdentifier ?? "unknown",
@@ -62,10 +62,36 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
             "visible": window.isVisible,
             "fullScreen": window.styleMask.contains(.fullScreen),
             "frame": NSStringFromRect(window.frame)]
+        object.merge(details) { _, new in new }
         if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
            let line = String(data: data, encoding: .utf8) {
             print(line)
             fflush(stdout)
+        }
+    }
+
+    func launchProduct() {
+        guard NSApp.isActive,
+              let path = ProcessInfo.processInfo.environment["YM_QA_PRODUCT_APP"],
+              Bundle(url: URL(fileURLWithPath: path))?.bundleIdentifier == "dev.chekusu.yomado",
+              NSRunningApplication.runningApplications(withBundleIdentifier: "dev.chekusu.yomado").isEmpty else {
+            record("native-launch-refused", details: ["reason": "requires active Companion, expected product bundle and no running product"])
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = true
+        record("native-launch-requested", details: ["launchRequestedWhileCompanionActive": NSApp.isActive])
+        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: configuration) { [weak self] app, error in
+            DispatchQueue.main.async {
+                self?.record("native-launch-completion", details: [
+                    "productPID": app?.processIdentifier ?? -1,
+                    "productActiveAtCompletion": app?.isActive ?? false,
+                    "productActivationPolicy": app?.activationPolicy.rawValue ?? -1,
+                    "errorDomain": (error as NSError?)?.domain ?? "",
+                    "errorCode": (error as NSError?)?.code ?? 0])
+            }
         }
     }
 
@@ -83,6 +109,7 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
             if !window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
         case "exit-full-screen":
             if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+        case "launch-product": launchProduct()
         case "quit": NSApp.terminate(nil)
         default: record("unknown-command"); return
         }

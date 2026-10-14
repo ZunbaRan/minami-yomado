@@ -25,27 +25,42 @@ func find(_ root: AXUIElement, matching: (AXUIElement) -> Bool) -> AXUIElement? 
     if matches.count > 1 { fail("ambiguous menu control") }
     return matches.first
 }
-func nonzeroSize(_ node: AXUIElement) -> Bool {
-    guard let value = read(node, kAXSizeAttribute), CFGetTypeID(value) == AXValueGetTypeID() else { return false }
-    let ax = value as! AXValue
-    guard AXValueGetType(ax) == .cgSize else { return false }
-    var size = CGSize.zero
-    return AXValueGetValue(ax, .cgSize, &size) && size.width > 0 && size.height > 0
+func bounds(_ node: AXUIElement) -> CGRect? {
+    guard let position = read(node, kAXPositionAttribute), let dimensions = read(node, kAXSizeAttribute),
+          CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(dimensions) == AXValueGetTypeID() else { return nil }
+    let p = position as! AXValue, s = dimensions as! AXValue
+    var origin = CGPoint.zero, size = CGSize.zero
+    guard AXValueGetType(p) == .cgPoint, AXValueGetType(s) == .cgSize,
+          AXValueGetValue(p, .cgPoint, &origin), AXValueGetValue(s, .cgSize, &size),
+          origin.x.isFinite, origin.y.isFinite, size.width.isFinite, size.height.isFinite,
+          size.width > 0, size.height > 0 else { return nil }
+    return CGRect(origin: origin, size: size)
 }
 func describe(_ node: AXUIElement) -> [String: Any] {
     ["role": string(node, kAXRoleAttribute), "subrole": string(node, kAXSubroleAttribute),
      "title": string(node, kAXTitleAttribute), "description": string(node, kAXDescriptionAttribute),
      "identifier": string(node, "AXIdentifier"),
      "enabled": (read(node, kAXEnabledAttribute) as? NSNumber)?.boolValue ?? false,
-     "nonzeroSize": nonzeroSize(node)]
+     "nonzeroSize": bounds(node) != nil]
 }
-func press(_ node: AXUIElement) {
-    guard (read(node, kAXEnabledAttribute) as? NSNumber)?.boolValue == true else { fail("control is disabled or unknown") }
-    var names: CFArray?
-    guard AXUIElementCopyActionNames(node, &names) == .success,
-          (names as? [String] ?? []).contains(kAXPressAction) else { fail("native AXPress unavailable") }
-    let error = AXUIElementPerformAction(node, kAXPressAction as CFString)
-    if error != .success { fail("native AXPress returned \(error.rawValue)") }
+func moveMouse(_ point: CGPoint) {
+    guard CGDisplayBounds(CGMainDisplayID()).contains(point),
+          let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
+        fail("mouse move point or event invalid")
+    }
+    move.post(tap: .cghidEventTap)
+}
+func clickMouse(_ point: CGPoint) {
+    guard CGDisplayBounds(CGMainDisplayID()).contains(point),
+          let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+        fail("mouse click point or events invalid")
+    }
+    down.setIntegerValueField(.mouseEventClickState, value: 1)
+    up.setIntegerValueField(.mouseEventClickState, value: 1)
+    down.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.08)
+    up.post(tap: .cghidEventTap)
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -67,20 +82,34 @@ case "open":
     // AXPress on this menu extra enters a tracking loop and returned
     // cannotComplete in the real run. Click the current AX-reported icon
     // bounds instead, matching a person's actual status-bar entry path.
-    guard let position = read(extra, kAXPositionAttribute), let dimensions = read(extra, kAXSizeAttribute),
-          CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(dimensions) == AXValueGetTypeID() else { fail("status icon geometry unavailable") }
-    let p = position as! AXValue, s = dimensions as! AXValue
-    var origin = CGPoint.zero, size = CGSize.zero
-    guard AXValueGetType(p) == .cgPoint, AXValueGetType(s) == .cgSize,
-          AXValueGetValue(p, .cgPoint, &origin), AXValueGetValue(s, .cgSize, &size),
-          size.width > 0, size.height > 0 else { fail("status icon geometry invalid") }
-    let point = CGPoint(x: origin.x+size.width/2, y: origin.y+size.height/2)
-    guard CGDisplayBounds(CGMainDisplayID()).contains(point) else { fail("status icon lies outside guest screen") }
-    guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left),
-          let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
-          let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { fail("mouse event unavailable") }
-    move.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.8)
-    down.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.08); up.post(tap: .cghidEventTap)
+    guard let initial = bounds(extra) else { fail("status icon geometry unavailable") }
+    let display = CGDisplayBounds(CGMainDisplayID())
+    if initial.minY < display.minY {
+        // The actual full-screen run reported y=-59. Reveal the native hidden
+        // menu bar at this same observed x, then discard that stale geometry.
+        let hover = CGPoint(x: initial.midX, y: display.minY + 1)
+        moveMouse(hover)
+        record["menuBarReveal"] = ["hoverPoint": [hover.x, hover.y],
+                                   "initialAXBounds": [initial.minX, initial.minY, initial.width, initial.height]]
+    }
+    var visibleIcon: AXUIElement?
+    for _ in 0..<40 {
+        if let current = menuExtra(), let frame = bounds(current), display.contains(frame),
+           (read(current, kAXEnabledAttribute) as? NSNumber)?.boolValue == true {
+            visibleIcon = current; break
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    guard let visibleIcon, let visibleFrame = bounds(visibleIcon), display.contains(visibleFrame) else {
+        fail("status icon did not become fully visible after bounded menu-bar reveal")
+    }
+    moveMouse(CGPoint(x: visibleFrame.midX, y: visibleFrame.midY))
+    Thread.sleep(forTimeInterval: 0.3)
+    guard let current = menuExtra(), let finalFrame = bounds(current), display.contains(finalFrame),
+          (read(current, kAXEnabledAttribute) as? NSNumber)?.boolValue == true else { fail("status icon changed before click") }
+    let point = CGPoint(x: finalFrame.midX, y: finalFrame.midY)
+    moveMouse(point)
+    clickMouse(point)
     record["inputPath"] = "mouse-at-current-AX-status-icon-center"
     record["observedPoint"] = [point.x, point.y]
 case "select-open-panel":
@@ -89,17 +118,29 @@ case "select-open-panel":
         if let currentExtra = menuExtra(), let item = find(currentExtra, matching: {
             string($0, kAXRoleAttribute) == kAXMenuItemRole
                 && string($0, kAXTitleAttribute) == "打开控制面板"
-        }), nonzeroSize(item), (read(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true {
+        }), let frame = bounds(item), CGDisplayBounds(CGMainDisplayID()).contains(frame),
+           (read(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true {
             target = item; break
         }
         Thread.sleep(forTimeInterval: 0.1)
     }
     guard let target else { fail("actual visible Open Control Panel menu item did not become available") }
     record["selectedItem"] = describe(target)
-    press(target)
+    guard let frame = bounds(target) else { fail("selected menu item geometry unavailable") }
+    moveMouse(CGPoint(x: frame.midX, y: frame.midY))
+    Thread.sleep(forTimeInterval: 0.2)
+    guard let currentExtra = menuExtra(), let current = find(currentExtra, matching: {
+        string($0, kAXRoleAttribute) == kAXMenuItemRole && string($0, kAXTitleAttribute) == "打开控制面板"
+    }), let finalFrame = bounds(current), CGDisplayBounds(CGMainDisplayID()).contains(finalFrame),
+          (read(current, kAXEnabledAttribute) as? NSNumber)?.boolValue == true else { fail("menu item changed before actual click") }
+    let point = CGPoint(x: finalFrame.midX, y: finalFrame.midY)
+    moveMouse(point)
+    clickMouse(point)
+    record["inputPath"] = "mouse-at-current-visible-AX-menu-item-center"
+    record["observedPoint"] = [point.x, point.y]
 default: fail("unsupported command")
 }
 record["endUptimeSeconds"] = ProcessInfo.processInfo.systemUptime
-record["actionResult"] = args[1] == "open" ? "mouse-posted-menu-must-be-verified" : "native-AXPress-success"
+record["actionResult"] = "mouse-posted-result-must-be-verified"
 let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
 print(String(data: data, encoding: .utf8)!)
