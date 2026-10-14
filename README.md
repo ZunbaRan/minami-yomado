@@ -4,7 +4,7 @@
 
 A work screen for visual agents, designed to let physical screens rest.
 
-[Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.4/Yomado-v0.3.4.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.4) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
+[Website](https://yomado.app/) · [Download for Apple Silicon](https://github.com/chekusu/yomado/releases/download/v0.3.5/Yomado-v0.3.5.zip) · [Release notes](https://github.com/chekusu/yomado/releases/tag/v0.3.5) · [简体中文](README.zh-CN.md) · [MIT license](LICENSE)
 
 ## See yomado in 60 seconds
 
@@ -74,14 +74,14 @@ dist/Yomado.zip
 
 The build script selects the active Xcode or Command Line Tools installation through `xcrun`. Set `YOMADO_DEVELOPER_DIR` to select another developer directory.
 
-The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.4), with a SHA-256 checksum. Intel binaries are not supplied. The official v0.3.4 archive is signed by CHEKUSU INC. with Developer ID, notarized by Apple, and includes a stapled notarization ticket. Notarization is separate from Mac App Store review.
+The native Apple Silicon build has been verified. The macOS 14 deployment target is a build setting, not a claim that every macOS 14+ system or Intel Mac is supported. An experimental Apple Silicon build is available in [GitHub Releases](https://github.com/chekusu/yomado/releases/tag/v0.3.5), with a SHA-256 checksum. Intel binaries are not supplied. The official v0.3.5 archive is signed by CHEKUSU INC. with Developer ID, notarized by Apple, and includes a stapled notarization ticket. Notarization is separate from Mac App Store review.
 
 Local builds receive an **ad hoc signature** by default. Setting `YOMADO_SIGNING_IDENTITY` explicitly enables Developer ID Application signing with the hardened runtime and secure timestamps for both the app and its recovery helper. This signing step does not submit the app for notarization. See the [website distribution process](docs/distribution.md) for signing, Apple notarization, stapling and release checks. A release is described as notarized only after Apple accepts that exact build and its final download passes verification. Follow your Mac's normal security policies when choosing whether to run a local build.
 
 ## Use the virtual display
 
 1. Extract the downloaded archive or build from source, then open `Yomado.app`. The panel shows the current physical screens and their visible apps.
-2. Choose **+** and start a saved screen, such as Codex, or create a new one. Use the screen’s **…** menu to rename it for an agent. New virtual screens are appended to the right of the existing layout while physical outputs stay enabled.
+2. Choose **+** and start a saved screen, such as Codex, or create a new one. Use the screen’s **…** menu to rename it for an agent. New virtual screens are appended to the right of the existing layout while physical outputs stay enabled. The app verifies extended mode, original main display, display modes, scale, rotation, positions and mirror relationships before admitting applications. If setup fails, it removes only the new screen and verifies recovery; unverified targets remain unavailable. Existing user mirror groups are preserved.
 3. Drag **only the agent’s application icons** into the desired virtual screen. An icon represents that app’s ordinary windows on the source screen; moving it does not collect the same app’s windows from other screens. You can also move actual windows manually. Dropping a running `.app` from Finder explicitly selects that app’s ordinary windows across screens. Open the app before adding it.
 4. Drag an app’s icon back into a physical screen to return its windows there, or use the icon’s return action. Dragging between physical screens is not provided; move the actual window for that operation. App counts reflect detected visible windows, not measured GPU activity or agent progress. Some apps reject Accessibility window positioning; yomado reports the failure.
 5. Select the virtual screen in your viewing or agent tools, if supported. Verify a fresh target-app screenshot and an actual reversible input action before starting work.
@@ -174,6 +174,8 @@ Lifecycle self-tests exercise a temporary virtual display, its dimensions, an ap
 Generated view images are **not** screenshots of Blender, Marvelous Designer, or another target application. Passing these tests does not validate an agent's input, physical monitor standby, energy savings, or unattended operation. Test receipts can contain display metadata; review them before sharing.
 
 ## Implementation
+
+`bridge/YMDisplayTopology.*` handles bounded display transactions and fail-closed verification; synthetic backend tests do not change live displays. DisplayLink hardware compatibility still requires testing on the specific dock, driver and macOS version.
 
 `app/Yomado.m` contains the AppKit app and test entry points. `app/ControlUI.*` and `app/AppWorkspaceView.*` draw the native screen layout, application icons and drag targets; `app/AppWorkspace.*` manages ordinary app window ownership and original placement; `app/WindowRecovery.*` and its pure policy header handle the opt-in WeChat window checkpoint. `app/Watchdog.m` contains the recovery helper; `bridge/VDVirtualDisplay.*` wraps the virtual-display interface. The application namespace is `dev.chekusu.yomado`.
 
