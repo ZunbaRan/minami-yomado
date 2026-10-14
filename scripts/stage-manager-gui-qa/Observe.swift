@@ -26,10 +26,10 @@ func tree(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any
     guard depth >= 0, budget > 0 else { return ["truncated": true] }
     budget -= 1
     var result: [String: Any] = [:]
-    for name in [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute] {
+    for name in [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, "AXIdentifier"] {
         if let value = stringAttribute(element, name) { result[name] = value }
     }
-    for name in [kAXFocusedAttribute, kAXMainAttribute, kAXMinimizedAttribute, "AXFullScreen"] {
+    for name in [kAXFocusedAttribute, kAXMainAttribute, kAXMinimizedAttribute, "AXFullScreen", kAXEnabledAttribute] {
         if let value = attribute(element, name) as? NSNumber { result[name] = value }
     }
     for name in [kAXPositionAttribute, kAXSizeAttribute] {
@@ -52,20 +52,72 @@ func tree(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any
     return result
 }
 
-func dockYomadoItems() -> [[String: Any]] {
-    guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [] }
-    var pending = [(AXUIElementCreateApplication(dock.processIdentifier), 0)]
-    var result: [[String: Any]] = []
-    var visited = 0
-    while let (node, depth) = pending.popLast(), visited < 400 {
-        visited += 1
-        let title = stringAttribute(node, kAXTitleAttribute) ?? ""
-        if title.lowercased() == "yomado" {
-            result.append(["title": title, "role": stringAttribute(node, kAXRoleAttribute) ?? "unknown"])
-        }
-        if depth < 5 { pending += elements(node, kAXChildrenAttribute).map { ($0, depth + 1) } }
+func dockObservation() -> [String: Any] {
+    guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
+        return ["dockProcessFound": false, "dockReadable": false, "walkComplete": false,
+                "regularCompanionPositiveControl": false, "yomadoItems": [], "companionItems": [],
+                "errors": ["dock-not-running"], "yomadoIconObservation": "unknown"]
     }
-    return result
+    let companion = NSRunningApplication.runningApplications(withBundleIdentifier: ownedBundleIDs[1]).first
+    let yomado = NSRunningApplication.runningApplications(withBundleIdentifier: ownedBundleIDs[0]).first
+    let trusted = AXIsProcessTrusted()
+    var pending = [(AXUIElementCreateApplication(dock.processIdentifier), 0)]
+    var yomadoItems: [[String: Any]] = []
+    var companionItems: [[String: Any]] = []
+    var errors: [String] = []
+    var rootChildrenReadable = false
+    var truncated = false
+    var visited = 0
+    while !pending.isEmpty {
+        if visited >= 1600 { truncated = true; break }
+        let (node, depth) = pending.removeLast()
+        visited += 1
+        var roleValue: CFTypeRef?
+        let roleError = AXUIElementCopyAttributeValue(node, kAXRoleAttribute as CFString, &roleValue)
+        let role = roleValue as? String ?? "unknown"
+        if roleError != .success { errors.append("role-read-error-\(roleError.rawValue)-depth-\(depth)") }
+        if role == "AXDockItem" {
+            var titleValue: CFTypeRef?
+            let titleError = AXUIElementCopyAttributeValue(node, kAXTitleAttribute as CFString, &titleValue)
+            let title = titleValue as? String ?? ""
+            if titleError != .success { errors.append("dock-item-title-error-\(titleError.rawValue)") }
+            let dockURL = attribute(node, "AXURL") as? URL
+            let matchesYomadoURL = dockURL != nil && dockURL?.standardizedFileURL == yomado?.bundleURL?.standardizedFileURL
+            let matchesCompanionURL = dockURL != nil && dockURL?.standardizedFileURL == companion?.bundleURL?.standardizedFileURL
+            if title.lowercased() == "yomado" || matchesYomadoURL {
+                yomadoItems.append(["title": title, "role": role, "matchesRunningBundleURL": matchesYomadoURL])
+            }
+            let companionTitles = ["QA Companion", "Companion", companion?.localizedName ?? ""].filter { !$0.isEmpty }
+            if matchesCompanionURL || companionTitles.contains(title) {
+                companionItems.append(["title": title, "role": role, "matchesRunningBundleURL": matchesCompanionURL])
+            }
+        }
+        var childrenValue: CFTypeRef?
+        let childrenError = AXUIElementCopyAttributeValue(node, kAXChildrenAttribute as CFString, &childrenValue)
+        if childrenError == .success {
+            guard let children = childrenValue as? [AXUIElement] else {
+                errors.append("invalid-children-value-depth-\(depth)"); continue
+            }
+            if depth == 0 { rootChildrenReadable = !children.isEmpty }
+            if depth >= 12 && !children.isEmpty {
+                truncated = true
+            } else {
+                pending += children.map { ($0, depth + 1) }
+            }
+        } else if depth == 0 || (childrenError != .attributeUnsupported && childrenError != .noValue) {
+            errors.append("children-read-error-\(childrenError.rawValue)-depth-\(depth)")
+        }
+    }
+    let readable = trusted && rootChildrenReadable && errors.isEmpty
+    let complete = !truncated && pending.isEmpty && errors.isEmpty
+    let positiveControl = companion?.activationPolicy == .regular && !companionItems.isEmpty
+    let observation = !yomadoItems.isEmpty ? "present"
+        : readable && complete && positiveControl ? "absent-in-readable-sample" : "unknown"
+    return ["dockProcessFound": true, "dockReadable": readable, "walkComplete": complete,
+            "walkTruncated": truncated, "visitedNodeCount": visited,
+            "regularCompanionPositiveControl": positiveControl,
+            "yomadoItems": yomadoItems, "companionItems": companionItems,
+            "errors": errors, "yomadoIconObservation": observation]
 }
 
 func applicationRecord(_ app: NSRunningApplication, includeTree: Bool) -> [String: Any] {
@@ -114,22 +166,41 @@ if args.first == "system-ui" {
           let app = NSRunningApplication.runningApplications(withBundleIdentifier: args[1]).first else { exit(1) }
     print(app.processIdentifier)
 } else if args.first == "timeline" {
-    let duration = min(60, max(1, Double(args.dropFirst().first ?? "15") ?? 15))
-    let start = Date()
-    while Date().timeIntervalSince(start) < duration {
+    let duration = min(180, max(1, Double(args.dropFirst().first ?? "15") ?? 15))
+    let stopFile = args.count > 2 ? args[2] : nil
+    let start = ProcessInfo.processInfo.systemUptime
+    var previousSampleStart: Double?
+    var index = 0
+    var stoppedByFile = false
+    while ProcessInfo.processInfo.systemUptime - start < duration {
+        if let stopFile, FileManager.default.fileExists(atPath: stopFile) { stoppedByFile = true; break }
+        let sampleStart = ProcessInfo.processInfo.systemUptime
         let yomado = NSRunningApplication.runningApplications(withBundleIdentifier: ownedBundleIDs[0]).first
-        writeJSON(["elapsedSeconds": Date().timeIntervalSince(start), "axTrusted": AXIsProcessTrusted(),
-                   "yomadoDockItems": dockYomadoItems(),
+        let dock = dockObservation()
+        let sampleEnd = ProcessInfo.processInfo.systemUptime
+        let actualInterval: Any = previousSampleStart.map { (sampleStart - $0) as Any } ?? NSNull()
+        writeJSON(["recordType": "sample", "sampleIndex": index, "sampleStartUptimeSeconds": sampleStart,
+                   "sampleEndUptimeSeconds": sampleEnd, "elapsedSeconds": sampleStart - start,
+                   "actualIntervalFromPreviousSampleStartSeconds": actualInterval,
+                   "requestedSleepAfterSampleSeconds": 0.1, "axTrusted": AXIsProcessTrusted(),
+                   "dock": dock,
                    "yomadoActivationPolicy": yomado?.activationPolicy.rawValue ?? -1])
+        previousSampleStart = sampleStart
+        index += 1
         Thread.sleep(forTimeInterval: 0.1)
     }
+    writeJSON(["recordType": "timeline-end", "sampleCount": index,
+               "endUptimeSeconds": ProcessInfo.processInfo.systemUptime,
+               "reason": stoppedByFile ? "requested-stop" : "duration-limit",
+               "elapsedSeconds": ProcessInfo.processInfo.systemUptime - start])
 } else {
     let applications = ownedBundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
     writeJSON(["timestamp": ISO8601DateFormatter().string(from: Date()),
+               "monotonicUptimeSeconds": ProcessInfo.processInfo.systemUptime,
                "axTrusted": AXIsProcessTrusted(), "screenCapturePreflight": CGPreflightScreenCaptureAccess(),
                "screensHaveSeparateSpaces": NSScreen.screensHaveSeparateSpaces,
                "stageManagerPreference": UserDefaults(suiteName: "com.apple.WindowManager")?.object(forKey: "GloballyEnabled") ?? "unset",
                "applications": applications.map { applicationRecord($0, includeTree: true) },
-               "yomadoDockItems": dockYomadoItems(),
+               "dock": dockObservation(),
                "groupingVerdict": "requires screenshot review; preferences and window flags are not a pass"])
 }

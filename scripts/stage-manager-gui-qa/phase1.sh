@@ -17,6 +17,10 @@ else
 fi
 [[ -x "$ym_qa_app/Contents/MacOS/Yomado" && -x "$ym_qa_helpers/observe" ]]
 mkdir -p "$ym_qa_evidence/control"
+if "$ym_qa_helpers/observe" pid dev.chekusu.yomado > "$ym_qa_evidence/preexisting-yomado-pid.txt" 2>/dev/null; then
+  printf '%s\n' 'REFUSED: the fresh runner already has a Yomado process; cannot identify a new launch safely.' >&2
+  exit 1
+fi
 ym_qa_yomado_pid=""
 ym_qa_companion_pid=""
 ym_qa_observer_pid=""
@@ -64,10 +68,33 @@ ym_qa_companion_pid=$!
 sleep 3
 ym_qa_capture 01-companion-front
 
-"$ym_qa_helpers/observe" timeline 55 > "$ym_qa_evidence/dock-timeline.jsonl" &
+ym_qa_stop_file="$ym_qa_evidence/control/dock-observer.stop"
+/bin/rm -f "$ym_qa_stop_file"
+"$ym_qa_helpers/observe" timeline 180 "$ym_qa_stop_file" > "$ym_qa_evidence/dock-timeline.jsonl" &
 ym_qa_observer_pid=$!
-"$ym_qa_app/Contents/MacOS/Yomado" > "$ym_qa_evidence/yomado.stdout" 2> "$ym_qa_evidence/yomado.stderr" &
-ym_qa_yomado_pid=$!
+# Wait for the first complete, flushed observation before launching Yomado.
+# Starting a background process alone is not a pre-launch observation.
+ym_qa_ready=false
+for ym_qa_attempt in {1..100}; do
+  if [[ -s "$ym_qa_evidence/dock-timeline.jsonl" ]]; then ym_qa_ready=true; break; fi
+  kill -0 "$ym_qa_observer_pid"
+  sleep 0.1
+done
+if [[ "$ym_qa_ready" != true ]]; then
+  printf '%s\n' 'Dock observer did not produce its first sample; refusing an unobserved launch.' >&2
+  exit 1
+fi
+# Match the normal user's initial application launch through LaunchServices.
+# No preexisting Yomado instance was allowed, so this PID belongs to this run.
+/usr/bin/open -n "$ym_qa_app"
+for ym_qa_attempt in {1..100}; do
+  if ym_qa_yomado_pid="$("$ym_qa_helpers/observe" pid dev.chekusu.yomado 2>/dev/null)"; then break; fi
+  sleep 0.1
+done
+if [[ -z "$ym_qa_yomado_pid" ]]; then
+  printf '%s\n' 'LaunchServices did not produce an identifiable Yomado process.' >&2
+  exit 1
+fi
 sleep 4
 kill -0 "$ym_qa_yomado_pid"
 ym_qa_capture 02-yomado-first-open
@@ -105,5 +132,21 @@ ym_qa_companion_command exit-full-screen
 sleep 4
 ym_qa_capture 09-after-full-screen
 
-printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"not-yet-tested","dockSamplingIntervalSeconds":0.1,"fullScreenVerdict":"requires-review"}\n' \
+# Capture the runner's real Mission Control AX identifiers before any later
+# Desktop-creation action is designed. Do not guess coordinates or buttons.
+/usr/bin/open -a 'Mission Control'
+sleep 1
+"$ym_qa_helpers/observe" system-ui > "$ym_qa_evidence/10-mission-control-ax.json"
+ym_qa_capture 10-mission-control
+/usr/bin/osascript -e 'tell application "System Events" to key code 53'
+sleep 1
+ym_qa_capture 11-final
+
+# If the safety cap expired before the final capture, coverage is incomplete.
+kill -0 "$ym_qa_observer_pid"
+/usr/bin/touch "$ym_qa_stop_file"
+wait "$ym_qa_observer_pid"
+ym_qa_observer_pid=""
+
+printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"not-yet-tested","dockSampling":"ready before LaunchServices launch; stop requested after final screenshot; compare monotonic sample start/end and final snapshot timestamps; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
   "$ym_qa_variant" "$ym_qa_stage_manager" > "$ym_qa_evidence/collection-status.json"

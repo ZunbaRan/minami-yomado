@@ -11,6 +11,11 @@ guard environment["GITHUB_ACTIONS"] == "true",
 }
 
 final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    let controlDirectory: String
+    init(controlDirectory: String) {
+        self.controlDirectory = controlDirectory
+        super.init()
+    }
     var window: NSWindow!
     var timer: Timer?
     var lastCommand = ""
@@ -84,7 +89,7 @@ final class CompanionDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
 }
 
 let app = NSApplication.shared
-let delegate = CompanionDelegate()
+let delegate = CompanionDelegate(controlDirectory: controlDirectory)
 app.setActivationPolicy(.regular)
 app.delegate = delegate
 app.run()

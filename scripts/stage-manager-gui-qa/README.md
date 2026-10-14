@@ -35,14 +35,32 @@ full-screen Space. Closing the panel is checked to leave its process alive.
 
 Evidence includes full desktop screenshots from the empty runner; CGWindow
 metadata and AX trees are restricted to these two apps. A Dock observer checks
-for the exact `yomado` Dock title every 100 ms. Absence from samples is evidence
-at that sampling rate, not proof that an arbitrarily brief icon never appeared.
-The production app's activation policy is recorded alongside those samples.
+for the exact `yomado` Dock title or current bundle URL. Each observation must
+read the Dock successfully, finish traversal, and find the regular Companion's
+Dock icon as a positive control before an absent result can be interpreted.
+Missing Dock processes, AX read errors, truncation, or a missing positive
+control produce `unknown`, not an absent-icon result. The first flushed sample
+is required before Yomado is launched.
+The initial production launch uses LaunchServices, refusing a runner with an
+existing Yomado process so cleanup cannot target an unrelated instance.
+
+The observer records monotonic sample start/end times and the actual interval
+between samples. Its 100 ms sleep is only a requested delay after each walk;
+it is not a guaranteed 10 Hz observation rate. Absence from readable samples
+does not prove that an icon never appeared between samples. The production
+app's activation policy is recorded alongside those samples.
+Sampling continues until a stop file is written after the final screenshot,
+with a 180-second safety limit. A limit reached before the final capture is
+incomplete evidence. Compare the final snapshot's monotonic timestamp with
+the timeline's sample and termination timestamps when reviewing coverage.
 
 `observe system-ui` captures the fresh runner's Control Center, System
 Settings, and Mission Control accessibility trees for adaptive setup and
 Desktop creation. It performs no input. System UI elements must be inspected
 before using them; do not hardcode guessed screen coordinates.
+The final phase enters Mission Control once, records its screenshot and AX
+identifiers/enabled state, then closes it with Escape. It does not create or
+rearrange Desktops in that phase.
 
 ## Acceptance boundary
 
