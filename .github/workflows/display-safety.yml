@@ -1,0 +1,43 @@
+name: Isolated display safety acceptance
+on:
+  push:
+    branches: [qa/display-safety-20261014]
+permissions:
+  contents: read
+concurrency:
+  group: display-safety-acceptance
+  cancel-in-progress: false
+jobs:
+  topology:
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3c10a9def12b462d5b5c3955661f5811688cef61
+          path: production
+          persist-credentials: false
+      - name: Build exact production source and isolated harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-output/display-safety
+          git -C production rev-parse HEAD > test-output/display-safety/tested-revision.txt
+          env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
+          git -C production diff --exit-code
+          bash scripts/display-safety-ci/build.sh "$GITHUB_WORKSPACE/production" "$RUNNER_TEMP/display-safety-qa"
+      - name: Exercise real display transactions in disposable session
+        shell: bash
+        run: |
+          source scripts/display-safety-ci/guard.sh
+          "$RUNNER_TEMP/display-safety-qa" "$GITHUB_WORKSPACE/test-output/display-safety"
+      - name: Collect generated evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: display-safety-macos-26
+          path: test-output/display-safety/
+          retention-days: 3
