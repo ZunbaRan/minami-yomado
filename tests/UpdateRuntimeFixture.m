@@ -141,6 +141,7 @@
         NSError *error = nil;
         BOOL ready = [owner.recovery prepareRestartWithProfiles:owner.workspace ? owner.workspace.profiles : @[] targetVersion:owner.updater.latestVersion
             targetBuild:owner.updater.latestBuild originCheckpoints:@[] error:&error];
+        if (!ready) [owner.workspace recordSurfaceInventoryDiagnostic];
         [owner record:@"workspace-prepared" values:@{@"ready":@(ready), @"errorCode":@(error.code)}];
         completion(ready, error);
     };

@@ -145,6 +145,45 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
         });
     });
 }
+- (void)recordSurfaceInventoryDiagnostic {
+    CGRect owned=CGDisplayBounds(self.display.displayID);
+    NSMutableArray *candidates=[NSMutableArray array];
+    NSMutableSet<NSNumber *> *owners=[NSMutableSet set];
+    NSArray *raw=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll|kCGWindowListExcludeDesktopElements,0));
+    for (NSDictionary *entry in raw) {
+        CGRect frame;
+        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds],&frame) ||
+            CGRectIsEmpty(CGRectIntersection(frame,owned))) continue;
+        NSNumber *pid=entry[(__bridge NSString *)kCGWindowOwnerPID] ?: @0;
+        [owners addObject:pid];
+        NSRunningApplication *app=[NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
+        [candidates addObject:@{@"pid":pid,@"windowID":entry[(__bridge NSString *)kCGWindowNumber] ?: @0,
+            @"bundleID":app.bundleIdentifier ?: @"",@"ownerName":entry[(__bridge NSString *)kCGWindowOwnerName] ?: @"",
+            @"layer":entry[(__bridge NSString *)kCGWindowLayer] ?: @0,
+            @"onScreen":entry[(__bridge NSString *)kCGWindowIsOnscreen] ?: @NO,
+            @"alpha":entry[(__bridge NSString *)kCGWindowAlpha] ?: @0,
+            @"frame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),@"width":@(frame.size.width),@"height":@(frame.size.height)}}];
+    }
+    // Disposable guest diagnostics only. Do not read window titles or
+    // alter the production inventory classifier to admit these entries.
+    NSMutableArray *AXOwners=[NSMutableArray array];
+    for (NSNumber *pid in [owners.allObjects sortedArrayUsingSelector:@selector(compare:)])
+        [AXOwners addObject:FAXApplicationDiagnostic(pid.intValue)];
+    NSMutableArray *screenFrames=[NSMutableArray array];
+    for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *ID=screen.deviceDescription[@"NSScreenNumber"];
+        if (![ID isEqual:@(self.display.displayID)]) continue;
+        NSRect frame=screen.frame,visible=screen.visibleFrame;
+        [screenFrames addObject:@{@"displayID":ID,@"cocoaFrame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),
+            @"width":@(frame.size.width),@"height":@(frame.size.height)},
+            @"cocoaVisibleFrame":@{@"x":@(visible.origin.x),@"y":@(visible.origin.y),
+            @"width":@(visible.size.width),@"height":@(visible.size.height)},
+            @"topInset":@(NSMaxY(frame)-NSMaxY(visible))}];
+    }
+    self.record(@"occupied-cg-inventory",@{@"displayID":@(self.display.displayID),
+        @"bounds":@{@"x":@(owned.origin.x),@"y":@(owned.origin.y),@"width":@(owned.size.width),@"height":@(owned.size.height)},
+        @"candidates":candidates,@"AXOwners":AXOwners,@"screenFrames":screenFrames});
+}
 - (void)observeInitialMove:(NSDictionary *)workIdentity destination:(NSDictionary *)destination
     probe:(NSDictionary *)probe deadline:(NSTimeInterval)deadline stableSamples:(NSUInteger)stableSamples
     completion:(void (^)(NSDictionary *,NSError *))completion {
@@ -155,43 +194,7 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
     if (!self.loggedSurfaceInventory || (captureError.code==13 &&
         [captureError.domain isEqual:@"dev.chekusu.yomado.update-workspace"] && NSProcessInfo.processInfo.systemUptime>=deadline)) {
         self.loggedSurfaceInventory=YES;
-        CGRect owned=CGDisplayBounds(self.display.displayID);
-        NSMutableArray *candidates=[NSMutableArray array];
-        NSMutableSet<NSNumber *> *owners=[NSMutableSet set];
-        NSArray *raw=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll|kCGWindowListExcludeDesktopElements,0));
-        for (NSDictionary *entry in raw) {
-            CGRect frame;
-            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds],&frame) ||
-                CGRectIsEmpty(CGRectIntersection(frame,owned))) continue;
-            NSNumber *pid=entry[(__bridge NSString *)kCGWindowOwnerPID] ?: @0;
-            [owners addObject:pid];
-            NSRunningApplication *app=[NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
-            [candidates addObject:@{@"pid":pid,@"windowID":entry[(__bridge NSString *)kCGWindowNumber] ?: @0,
-                @"bundleID":app.bundleIdentifier ?: @"",@"ownerName":entry[(__bridge NSString *)kCGWindowOwnerName] ?: @"",
-                @"layer":entry[(__bridge NSString *)kCGWindowLayer] ?: @0,
-                @"onScreen":entry[(__bridge NSString *)kCGWindowIsOnscreen] ?: @NO,
-                @"alpha":entry[(__bridge NSString *)kCGWindowAlpha] ?: @0,
-                @"frame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),@"width":@(frame.size.width),@"height":@(frame.size.height)}}];
-        }
-        // Disposable guest diagnostics only. Do not read window titles or
-        // alter the production inventory classifier to admit these entries.
-        NSMutableArray *AXOwners=[NSMutableArray array];
-        for (NSNumber *pid in [owners.allObjects sortedArrayUsingSelector:@selector(compare:)])
-            [AXOwners addObject:FAXApplicationDiagnostic(pid.intValue)];
-        NSMutableArray *screenFrames=[NSMutableArray array];
-        for (NSScreen *screen in NSScreen.screens) {
-            NSNumber *ID=screen.deviceDescription[@"NSScreenNumber"];
-            if (![ID isEqual:@(self.display.displayID)]) continue;
-            NSRect frame=screen.frame,visible=screen.visibleFrame;
-            [screenFrames addObject:@{@"displayID":ID,@"cocoaFrame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),
-                @"width":@(frame.size.width),@"height":@(frame.size.height)},
-                @"cocoaVisibleFrame":@{@"x":@(visible.origin.x),@"y":@(visible.origin.y),
-                @"width":@(visible.size.width),@"height":@(visible.size.height)},
-                @"topInset":@(NSMaxY(frame)-NSMaxY(visible))}];
-        }
-        self.record(@"occupied-cg-inventory",@{@"displayID":@(self.display.displayID),
-            @"bounds":@{@"x":@(owned.origin.x),@"y":@(owned.origin.y),@"width":@(owned.size.width),@"height":@(owned.size.height)},
-            @"candidates":candidates,@"AXOwners":AXOwners,@"screenFrames":screenFrames});
+        [self recordSurfaceInventoryDiagnostic];
     }
     NSArray *windows=after[@"windows"] ?: @[];
     BOOL inventoryMatches=windows.count==1 && [windows[0][@"identity"] isEqual:workIdentity] &&
