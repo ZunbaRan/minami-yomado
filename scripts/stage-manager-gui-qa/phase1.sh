@@ -7,7 +7,7 @@ ym_qa_app="${1:?Usage: phase1.sh Yomado.app helper-directory evidence-directory 
 ym_qa_helpers="${2:?missing helper-directory}"
 ym_qa_evidence="${3:?missing evidence-directory}"
 ym_qa_variant="${4:?missing variant}"
-case "$ym_qa_variant" in regular-default-spaces|regular-no-auto-spaces|experiment-normal-bundle|experiment-sync-intent|experiment-activate-all) ;; *) printf 'Unknown production QA variant.\n' >&2; exit 64;; esac
+case "$ym_qa_variant" in regular-default-spaces|regular-no-auto-spaces) ;; *) printf 'Unknown production QA variant.\n' >&2; exit 64;; esac
 ym_qa_stage_manager="unverified"
 if [[ "${YM_QA_STAGE_MANAGER_RUNTIME_CONFIRMED:-}" == true \
    && "$(/usr/bin/defaults read com.apple.WindowManager GloballyEnabled 2>/dev/null || true)" == 1 ]]; then
@@ -35,12 +35,27 @@ ym_qa_cleanup() {
   for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid" "$ym_qa_reference_pid"; do
     if [[ -n "$ym_qa_pid" ]] && kill -0 "$ym_qa_pid" 2>/dev/null; then kill -TERM "$ym_qa_pid" 2>/dev/null || true; fi
   done
+  # The next isolated virtual-display suite requires no pre-existing product.
+  # Give only this run's processes time to finish; never kill by application name.
+  for ym_qa_attempt in {1..50}; do
+    local any_alive=false
+    for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid" "$ym_qa_reference_pid"; do
+      if [[ -n "$ym_qa_pid" ]] && kill -0 "$ym_qa_pid" 2>/dev/null; then any_alive=true; fi
+    done
+    if [[ "$any_alive" == false ]]; then break; fi
+    sleep 0.1
+  done
+  for ym_qa_pid in "$ym_qa_observer_pid" "$ym_qa_yomado_pid" "$ym_qa_companion_pid" "$ym_qa_reference_pid"; do
+    if [[ -n "$ym_qa_pid" ]] && kill -0 "$ym_qa_pid" 2>/dev/null; then
+      printf 'Owned fixture PID did not finish cleanup: %s\n' "$ym_qa_pid" >&2
+      exit_status=1
+    fi
+  done
+  return "$exit_status"
 }
 trap ym_qa_cleanup EXIT
 ym_qa_capture() {
-  local label="$1"
-  "$ym_qa_helpers/observe" > "$ym_qa_evidence/$label.json"
-  /usr/sbin/screencapture -x "$ym_qa_evidence/$label.png"
+  /bin/bash "$ym_qa_source/capture-lifecycle.sh" "$ym_qa_helpers" "$ym_qa_evidence" "$1" "${2:-}"
 }
 ym_qa_companion_command() {
   local command="$1"
@@ -54,22 +69,8 @@ ym_qa_panel_menu() {
   ym_qa_capture "$label-menu-open"
   "$ym_qa_helpers/panel-menu-actions" "$ym_qa_yomado_pid" select-open-panel > "$ym_qa_evidence/$label-menu-select-action.json"
 }
-ym_qa_own_ax_action() {
-  local action="$1"
-  /usr/bin/osascript - "$ym_qa_yomado_pid" "$action" <<'APPLESCRIPT'
-on run argv
-  set targetPID to (item 1 of argv) as integer
-  set actionName to item 2 of argv
-  tell application "System Events"
-    set targetProcess to first application process whose unix id is targetPID
-    tell targetProcess
-      if actionName is "close" then
-        click (first button of window 1 whose subrole is "AXCloseButton")
-      end if
-    end tell
-  end tell
-end run
-APPLESCRIPT
+ym_qa_close_panel() {
+  /bin/bash "$ym_qa_source/close-owned-panel.sh" "$ym_qa_helpers" "$ym_qa_yomado_pid" > "$ym_qa_evidence/$1-close-action.json"
 }
 
 "$ym_qa_helpers/observe" > "$ym_qa_evidence/00-before.json"
@@ -98,7 +99,7 @@ sleep 1
 
 ym_qa_stop_file="$ym_qa_evidence/control/dock-observer.stop"
 /bin/rm -f "$ym_qa_stop_file"
-"$ym_qa_helpers/observe" timeline 240 "$ym_qa_stop_file" > "$ym_qa_evidence/dock-timeline.jsonl" &
+"$ym_qa_helpers/observe" timeline 480 "$ym_qa_stop_file" > "$ym_qa_evidence/dock-timeline.jsonl" &
 ym_qa_observer_pid=$!
 # Wait for the first complete, flushed observation before launching Yomado.
 # Starting a background process alone is not a pre-launch observation.
@@ -126,24 +127,34 @@ if [[ -z "$ym_qa_yomado_pid" ]]; then
 fi
 sleep 4
 kill -0 "$ym_qa_yomado_pid"
-ym_qa_capture 02-yomado-first-open
+ym_qa_capture 02-yomado-first-open 0
 
-ym_qa_own_ax_action close
+ym_qa_close_panel 03
 sleep 2
 kill -0 "$ym_qa_yomado_pid"
-ym_qa_capture 03-panel-closed-app-alive
+ym_qa_capture 03-panel-closed-app-alive 1
 ym_qa_companion_command show
 sleep 2
 ym_qa_panel_menu 04-reopen
 sleep 3
-ym_qa_capture 04-reopen
+ym_qa_capture 04-reopen 0
 
-ym_qa_own_ax_action close
+# Closing demotes the running process and removes its unpinned Dock item.
+# Reopen it through LaunchServices, not a nonexistent Dock item; do not use -n.
+ym_qa_close_panel 04a
 sleep 2
-ym_qa_capture 04a-panel-closed-before-dock
-"$ym_qa_helpers/panel-window-actions" "$ym_qa_yomado_pid" dock-open > "$ym_qa_evidence/04b-dock-open-action.json"
+ym_qa_capture 04a-panel-closed-before-launchservices 1
+/usr/bin/open "$ym_qa_app"
 sleep 3
-ym_qa_capture 04b-dock-reopen
+[[ "$("$ym_qa_helpers/observe" pid dev.chekusu.yomado)" == "$ym_qa_yomado_pid" ]]
+ym_qa_capture 04b-launchservices-reopen 0
+# A Dock click is still useful while the open panel is Regular. Hide it behind
+# the Companion without closing, then click the real current Dock item.
+ym_qa_companion_command show
+sleep 2
+"$ym_qa_helpers/panel-window-actions" "$ym_qa_yomado_pid" dock-open > "$ym_qa_evidence/04c-dock-open-action.json"
+sleep 3
+ym_qa_capture 04c-dock-open-while-regular 0
 
 "$ym_qa_helpers/panel-window-actions" "$ym_qa_yomado_pid" minimize > "$ym_qa_evidence/05-minimize-action.json"
 sleep 2
@@ -152,7 +163,7 @@ ym_qa_companion_command show
 sleep 2
 ym_qa_panel_menu 06-reopen-minimized
 sleep 3
-ym_qa_capture 06-reopen-minimized
+ym_qa_capture 06-reopen-minimized 0
 
 # The companion's real native full-screen window supplies a separate Space.
 # Screenshots and did-enter-full-screen log evidence are required before any
@@ -163,7 +174,18 @@ sleep 4
 ym_qa_capture 07-companion-full-screen
 ym_qa_panel_menu 08-open-from-full-screen
 sleep 4
-ym_qa_capture 08-open-from-full-screen
+ym_qa_capture 08-open-from-full-screen 0
+# Repeat the cross-Space operation only after the production presenter has
+# really hidden the panel and demoted the same process to Accessory.
+ym_qa_close_panel 08a
+sleep 2
+ym_qa_capture 08a-panel-closed-after-full-screen-open 1
+ym_qa_companion_command show
+sleep 3
+ym_qa_capture 08b-native-full-screen-after-close
+ym_qa_panel_menu 08c-reopen-from-full-screen-after-close
+sleep 4
+ym_qa_capture 08c-reopen-from-full-screen-after-close 0
 ym_qa_companion_command exit-full-screen
 sleep 4
 ym_qa_capture 09-after-full-screen
@@ -181,35 +203,7 @@ ym_qa_capture 11-final
 /bin/bash "$ym_qa_source/desktop-scenarios.sh" "$ym_qa_app" "$ym_qa_helpers" \
   "$ym_qa_evidence/desktops" "$ym_qa_yomado_pid"
 
-if [[ "${YM_QA_NATIVE_LAUNCH_DIAGNOSTIC:-false}" == true ]]; then
-  # This extra scenario begins only after all baseline scenarios are captured.
-  # The existing owned production process is the only application terminated.
-  ym_qa_capture 12-native-launch-before-restart
-  kill -TERM "$ym_qa_yomado_pid"
-  for ym_qa_attempt in {1..100}; do
-    if ! kill -0 "$ym_qa_yomado_pid" 2>/dev/null; then break; fi
-    sleep 0.1
-  done
-  if kill -0 "$ym_qa_yomado_pid" 2>/dev/null; then
-    printf '%s\n' 'Owned Yomado did not terminate for the separate cold-launch diagnostic.' >&2
-    exit 1
-  fi
-  ym_qa_yomado_pid=""
-  ym_qa_companion_command show
-  sleep 2
-  ym_qa_capture 13-native-launch-active-companion
-  ym_qa_companion_command launch-product
-  for ym_qa_attempt in {1..100}; do
-    if ym_qa_yomado_pid="$("$ym_qa_helpers/observe" pid dev.chekusu.yomado 2>/dev/null)"; then break; fi
-    sleep 0.1
-  done
-  if [[ -z "$ym_qa_yomado_pid" ]]; then
-    printf '%s\n' 'Native Companion launch did not produce the expected Yomado process.' >&2
-    exit 1
-  fi
-  sleep 4
-  ym_qa_capture 14-native-cold-launch-result
-fi
+# No cold restart: every scenario below must retain the original PID/window.
 
 if [[ "${YM_QA_EXTRA_GROUP_SCENARIOS:-false}" == true ]]; then
   ym_qa_group_status=0
@@ -229,6 +223,6 @@ kill -0 "$ym_qa_observer_pid"
 wait "$ym_qa_observer_pid"
 ym_qa_observer_pid=""
 
-printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"requires-review-of-desktops-evidence","dockSampling":"ready before LaunchServices launch; stop requested after final Desktop screenshot; compare monotonic sample start/end and final snapshot timestamps; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
+printf '{"variant":"%s","collectionComplete":true,"stageManagerSetup":"%s","groupingVerdict":"requires-review","crossDesktopVerdict":"requires-review-of-desktops-evidence","dockSampling":"prelaunch timeline with explicit quiet Regular/Accessory intervals; same PID through close and reopen; 0.1s is only requested sleep","fullScreenVerdict":"requires-review"}\n' \
   "$ym_qa_variant" "$ym_qa_stage_manager" > "$ym_qa_evidence/collection-status.json"
-python3 "$ym_qa_source/check-regular-evidence.py" "$ym_qa_evidence" > "$ym_qa_evidence/regular-structural-checks.json"
+python3 "$ym_qa_source/check-regular-evidence.py" "$ym_qa_evidence" > "$ym_qa_evidence/lifecycle-structural-checks.json"

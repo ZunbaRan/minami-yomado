@@ -1,25 +1,25 @@
-name: PR 2 isolated macOS GUI acceptance
+name: PR 6 isolated macOS GUI acceptance
 on:
   push:
-    branches: [qa/pr-2-gui-acceptance-20261014]
+    branches: [qa/pr-6-gui-acceptance-20261015]
 permissions:
   contents: read
 concurrency:
-  group: pr2-isolated-gui-qa
+  group: pr6-isolated-gui-qa
   cancel-in-progress: false
 jobs:
   gui-evidence:
     runs-on: macos-26
-    timeout-minutes: 12
+    timeout-minutes: 18
     strategy:
       fail-fast: false
       matrix:
         include:
           - variant: regular-default-spaces
-            revision: 3776ed9c5ec1fb49260bf3400da1492210dfa091
+            revision: f7c12f798cfe15101cb6b6003c5b7e9ea6402995
             space-switching: default
           - variant: regular-no-auto-spaces
-            revision: 3776ed9c5ec1fb49260bf3400da1492210dfa091
+            revision: f7c12f798cfe15101cb6b6003c5b7e9ea6402995
             space-switching: off
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -37,12 +37,14 @@ jobs:
           mkdir -p test-output/gui-qa
           xcrun swift scripts/stage-manager-gui-qa/preflight.swift > test-output/gui-qa/preflight.json
           git -C production rev-parse HEAD > test-output/gui-qa/tested-revision.txt
+          git rev-parse HEAD > test-output/gui-qa/harness-revision.txt
       - name: Build exact unchanged production revision and QA helpers
         shell: bash
         run: |
           set -euo pipefail
           env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
           git -C production diff --exit-code
+          shasum -a 256 production/dist/Yomado.app/Contents/MacOS/Yomado > test-output/gui-qa/tested-binary.sha256
           bash scripts/stage-manager-gui-qa/build-helpers.sh "$RUNNER_TEMP/yomado-gui-helpers"
       - name: Verify actual Space-switching setting in disposable guest
         shell: bash
@@ -54,15 +56,20 @@ jobs:
           bash scripts/stage-manager-gui-qa/setup-guest.sh "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/setup"
       - name: Record actual app lifecycle and full-screen scenarios
         env:
-          YM_QA_NATIVE_LAUNCH_DIAGNOSTIC: "true"
+          YM_QA_NATIVE_LAUNCH_DIAGNOSTIC: "false"
           YM_QA_EXTRA_GROUP_SCENARIOS: "true"
         shell: bash
         run: |
           bash scripts/stage-manager-gui-qa/phase1.sh "$GITHUB_WORKSPACE/production/dist/Yomado.app" "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/scenarios" "${{ matrix.variant }}"
+      - name: Verify product-owned virtual display persists with closed panel
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          bash scripts/stage-manager-gui-qa/virtual-persistence-scenarios.sh "$GITHUB_WORKSPACE/production/dist/Yomado.app" "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/virtual-persistence"
       - name: Collect disposable-runner evidence for review
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr2-gui-${{ matrix.variant }}
+          name: pr6-gui-${{ matrix.variant }}
           path: test-output/gui-qa/
-          retention-days: 3
+          retention-days: 7

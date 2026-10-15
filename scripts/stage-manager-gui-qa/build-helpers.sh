@@ -27,4 +27,19 @@ PLIST
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier org.yomado.qa.Reference' "$ym_qa_build/Reference.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleName QA Reference' "$ym_qa_build/Reference.app/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$ym_qa_build/Reference.app"
+mkdir -p "$ym_qa_build/VirtualPersistenceFixture.app/Contents/MacOS"
+MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/VirtualPersistenceActions.swift" -o "$ym_qa_build/virtual-persistence-actions"
+MACOSX_DEPLOYMENT_TARGET=14.0 /usr/bin/xcrun swiftc -O "$ym_qa_source/VirtualPersistenceFixture.swift" -o "$ym_qa_build/VirtualPersistenceFixture.app/Contents/MacOS/VirtualPersistenceFixture"
+cat > "$ym_qa_build/VirtualPersistenceFixture.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>org.yomado.qa.VirtualPersistence</string>
+<key>CFBundleExecutable</key><string>VirtualPersistenceFixture</string>
+<key>CFBundleName</key><string>QA Persistence</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>
+PLIST
+/usr/bin/codesign --force --sign - "$ym_qa_build/VirtualPersistenceFixture.app"
 printf '%s\n' 'Built hosted-runner QA helpers.'

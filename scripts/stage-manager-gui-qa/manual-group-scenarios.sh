@@ -23,9 +23,8 @@ ym_group_cleanup() {
 }
 trap ym_group_cleanup EXIT
 ym_group_capture() {
-  "$ym_group_helpers/observe" > "$ym_group_evidence/$1.json"
+  /bin/bash "$ym_qa_source/capture-lifecycle.sh" "$ym_group_helpers" "$ym_group_evidence" "$1" "${2:-}"
   "$ym_group_helpers/manual-group-actions" inspect > "$ym_group_evidence/$1-group-discovery.json"
-  /usr/sbin/screencapture -x "$ym_group_evidence/$1.png"
 }
 ym_group_show_companion() {
   printf '{"nonce":"%s","command":"show"}\n' "$(/usr/bin/uuidgen)" > "$ym_group_control/command.tmp"
@@ -56,6 +55,14 @@ ym_group_reference_pid=$!
 sleep 3
 ym_group_capture 04-reference-active-group-away
 ym_group_open_panel 05-reopen-manual-group
-ym_group_capture 05-reopen-manual-group
-printf '%s\n' '{"collectionComplete":true,"manualGroupFormation":"requires actual before/after drag screenshot review","manualGroupPreservation":"requires paired-thumbnail and both-returned-window evidence after Reference switch","noAutomaticPass":true}' \
+ym_group_capture 05-reopen-manual-group 0
+# Preserve direct evidence of the existing group across the newly introduced
+# close -> Accessory -> reopen path; do not infer grouping from window flags.
+/bin/bash "$ym_qa_source/close-owned-panel.sh" "$ym_group_helpers" "$ym_group_product_pid" > "$ym_group_evidence/06-close-action.json"
+sleep 2
+ym_group_capture 06-closed-manual-group 1
+ym_group_show_companion
+ym_group_open_panel 07-reopen-manual-group-after-close
+ym_group_capture 07-reopen-manual-group-after-close 0
+printf '%s\n' '{"collectionComplete":true,"manualGroupFormation":"requires actual before/after drag screenshot review","manualGroupPreservation":"requires paired-thumbnail and both-returned-window evidence after Reference switch and after close/Accessory/reopen","noAutomaticPass":true}' \
   > "$ym_group_evidence/collection-status.json"
