@@ -293,4 +293,33 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
     if (!matches) return FFail(error,7,@"Exact surviving window identity, geometry or physical probe changed.");
     return [self captureNamed:@"occupied-after.png" error:error];
 }
+- (void)recordRecoveryFailureDiagnostic {
+    // Observe the exact surviving fixture identities after the failed production
+    // call. This does not retry restoration, move windows, or grant permission.
+    BOOL trusted=AXIsProcessTrusted();
+    NSMutableDictionary *observations=[NSMutableDictionary dictionary];
+    for (NSString *role in @[@"work",@"probe"]) {
+        NSDictionary *identity=self.baseline[role][@"identity"];
+        NSError *error=nil;
+        NSDictionary *window=identity ? [self.backend readWindow:identity error:&error] : nil;
+        NSMutableArray *cg=[NSMutableArray array];
+        NSArray *raw=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow,
+            [identity[@"windowID"] unsignedIntValue]));
+        for (NSDictionary *entry in raw) {
+            CGRect frame;
+            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds],&frame)) continue;
+            [cg addObject:@{@"pid":entry[(__bridge NSString *)kCGWindowOwnerPID] ?: @0,
+                @"windowID":entry[(__bridge NSString *)kCGWindowNumber] ?: @0,
+                @"layer":entry[(__bridge NSString *)kCGWindowLayer] ?: @0,
+                @"onScreen":entry[(__bridge NSString *)kCGWindowIsOnscreen] ?: @NO,
+                @"frame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),
+                    @"width":@(frame.size.width),@"height":@(frame.size.height)}}];
+        }
+        observations[role]=@{@"expectedIdentity":identity ?: @{},@"nativeWindow":FWindowDiagnostic(window),
+            @"nativeError":FErrorDiagnostic(error),@"CGWindows":cg,
+            @"AXApplication":identity ? FAXApplicationDiagnostic([identity[@"pid"] intValue]) : @{}};
+    }
+    self.record(@"occupied-recovery-failure-diagnostic",@{@"accessibilityTrusted":@(trusted),
+        @"observations":observations});
+}
 @end

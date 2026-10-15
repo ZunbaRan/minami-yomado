@@ -89,13 +89,23 @@
 }
 - (void)completeRecovery:(NSArray<NSDictionary *> *)profiles {
     NSError *error=nil;
-    BOOL restored=[self.recovery restoreWithProfiles:profiles error:&error] &&
-        (!self.workspace || [self.workspace verifyRestoredWorkspace:&error]) &&
-        [self.recovery completeRestoration:&error];
+    NSString *phase=@"production-restore";
+    BOOL restored=[self.recovery restoreWithProfiles:profiles error:&error];
+    if (restored) {
+        phase=@"fixture-verification";
+        restored=!self.workspace || [self.workspace verifyRestoredWorkspace:&error];
+    }
+    if (restored) {
+        phase=@"complete-restoration";
+        restored=[self.recovery completeRestoration:&error];
+    }
+    if (!restored) [self.workspace recordRecoveryFailureDiagnostic];
     BOOL consumed=![NSFileManager.defaultManager fileExistsAtPath:
         [self.directory stringByAppendingPathComponent:@"journal/restart.json"]];
     [self record:restored && consumed ? @"updated-and-recovered" : @"recovery-failed"
-        values:@{@"restored":@(restored),@"journalConsumed":@(consumed),@"errorDomain":error.domain ?: @"",@"errorCode":@(error.code)}];
+        values:@{@"restored":@(restored),@"journalConsumed":@(consumed),@"phase":phase,
+            @"errorDomain":error.domain ?: @"",@"errorCode":@(error.code),
+            @"errorDescription":[error.domain isEqual:YMUpdateWorkspaceRecoveryErrorDomain] ? error.localizedDescription : @""}];
 }
 - (void)beginUpdate {
     NSBundle *bundle=NSBundle.mainBundle;

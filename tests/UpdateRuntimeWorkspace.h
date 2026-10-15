@@ -11,5 +11,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)recreateProfiles:(NSArray<NSDictionary *> *)profiles completion:(void (^)(BOOL, NSError * _Nullable))completion;
 - (NSArray<NSDictionary *> *)profiles;
 - (BOOL)verifyRestoredWorkspace:(NSError **)error;
+- (void)recordRecoveryFailureDiagnostic;
 @end
 NS_ASSUME_NONNULL_END

@@ -25,6 +25,10 @@ static NSError *Error(void) { return [NSError errorWithDomain:@"fixture" code:1 
 @property BOOL failRead;
 @property BOOL failCapture;
 @property NSUInteger failMoveNumber;
+@property NSUInteger readCalls;
+@property NSUInteger failReadNumber;
+@property NSError *readFailure;
+@property NSDictionary *readFailureResult;
 @property void (^onCapture)(void);
 @end
 @implementation FakeRecovery
@@ -43,6 +47,11 @@ static NSError *Error(void) { return [NSError errorWithDomain:@"fixture" code:1 
     return @{@"displays":self.displays.copy,@"windows":windows.copy,@"privatePath":@"PRIVATE_CANARY_DO_NOT_PERSIST"};
 }
 - (NSDictionary *)readWindow:(NSDictionary *)identity error:(NSError **)error {
+    self.readCalls++;
+    if (self.failReadNumber && self.readCalls==self.failReadNumber) {
+        if (error) *error=self.readFailure;
+        return self.readFailureResult;
+    }
     NSDictionary *w=self.windows[identity[@"windowID"]];
     if (self.failRead || ![w[@"identity"] isEqual:identity]) { if(error)*error=Error(); return nil; }
     return @{@"identity":w[@"identity"],@"frame":w[@"frame"]};
@@ -135,6 +144,27 @@ static void StartupAndRestoreGates(void) {
         if(scenario==11)b.failRead=YES;
         Check(![next restoreWithProfiles:Profiles(9) error:&e] && b.writes==0,@"restore gates before first move");
         Check([NSFileManager.defaultManager fileExistsAtPath:[dir URLByAppendingPathComponent:@"restart.json"].path],@"failure retains checkpoint");Cleanup(dir);
+    }
+}
+static void ReadFailureDiagnostics(void) {
+    for (NSUInteger stage=0;stage<3;stage++) for (NSUInteger failure=0;failure<5;failure++) {
+        NSURL *dir=Directory();FakeRecovery *b=[FakeRecovery new];YMUpdateWorkspaceRecovery *source=Recovery(dir,b);NSError *e=nil;
+        Check(Prepare(source,&e)&&[source commitPreparedRestart:&e],@"read diagnostics setup");Restart(b);
+        YMUpdateWorkspaceRecovery *next=Recovery(dir,b);Check([next pendingProfilesWithError:&e]!=nil,@"read diagnostics claim");Create(b);
+        if (stage==2) Check([next restoreWithProfiles:Profiles(9) error:&e],@"read diagnostics restored before handoff");
+        b.failReadNumber=b.readCalls+(stage==1 ? 3:1);
+        if (failure<2) b.readFailure=[NSError errorWithDomain:YMUpdateWorkspaceRecoveryErrorDomain code:failure+1
+            userInfo:@{NSLocalizedDescriptionKey:failure==0 ? @"Window control permission is unavailable.":@"Saved application identity changed."}];
+        if (failure==3) b.readFailureResult=@{@"identity":Identity(999),@"frame":Frame(1400,100,500,300)};
+        if (failure==4) b.readFailureResult=@{@"identity":Identity(42),@"frame":@{}};
+        e=Error();
+        BOOL result=stage==2 ? [next completeRestoration:&e]:[next restoreWithProfiles:Profiles(9) error:&e];
+        Check(!result,@"read failure cannot complete restoration");
+        Check(failure<2 ? e==b.readFailure : [e.domain isEqual:YMUpdateWorkspaceRecoveryErrorDomain]&&e.code==34,
+            @"native read errors survive; absent error and malformed observations retain generic mismatch diagnostics");
+        Check(b.writes==(stage==0 ? 0:2),@"read failures never trigger extra movement or retries");
+        Check([NSFileManager.defaultManager fileExistsAtPath:[dir URLByAppendingPathComponent:@"restart.json"].path],
+            @"all read failures retain the recovery checkpoint");Cleanup(dir);
     }
 }
 static void RetryAndPrivacy(void) {
@@ -364,4 +394,4 @@ static void MenuChromeClassification(void) {
             @"other-screen corroboration cannot bypass trusted geometry or real-window protection");
     }
 }
-int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();MenuChromeClassification();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
+int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();ReadFailureDiagnostics();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();MenuChromeClassification();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }

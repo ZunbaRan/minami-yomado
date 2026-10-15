@@ -716,7 +716,9 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
         for (NSDictionary *p in self.journal[@"profiles"]) if ([p[@"displayID"] isEqual:saved[@"displayID"]]) oldProfile=p;
         for (NSDictionary *p in profiles) if ([p[@"ordinal"] isEqual:oldProfile[@"ordinal"]]) newProfile=p;
         if (!oldProfile || !newProfile) return UFail(error,31,@"A saved window has no verified workspace.");
-        NSDictionary *current=[self.backend readWindow:saved[@"identity"] error:error];
+        NSError *readError=nil;
+        NSDictionary *current=[self.backend readWindow:saved[@"identity"] error:&readError];
+        if (!current && readError) { if (error) *error=readError; return NO; }
         if (!current || ![current[@"identity"] isEqual:saved[@"identity"]] || !YMWorkspaceGeometry(current[@"frame"])) return UFail(error,34,@"A saved window is unavailable or changed; no substitute will be moved.");
         // The saved and recreated bounds must agree, so the original absolute
         // frame is also exactly the original virtual-relative placement.
@@ -728,7 +730,9 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
             fromFrame:move[@"before"] toFrame:move[@"after"] error:error]) return NO;
     }
     for (NSDictionary *move in moves) {
-        NSDictionary *current=[self.backend readWindow:move[@"identity"] error:error];
+        NSError *readError=nil;
+        NSDictionary *current=[self.backend readWindow:move[@"identity"] error:&readError];
+        if (!current && readError) { if (error) *error=readError; return NO; }
         if (!current || ![current[@"identity"] isEqual:move[@"identity"]] || !USameFrame(current[@"frame"],move[@"after"]))
             return UFail(error,34,@"A restored window changed before verification; recovery remains pending.");
     }
@@ -747,7 +751,9 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
     if (!self.claimed || !self.restored) return UFail(error,36,@"Restoration has not been verified yet.");
     if (![self environment:self.restoredProfiles requireBounds:YES error:error]) return NO;
     for (NSDictionary *saved in self.journal[@"state"][@"windows"]) {
-        NSDictionary *current=[self.backend readWindow:saved[@"identity"] error:error];
+        NSError *readError=nil;
+        NSDictionary *current=[self.backend readWindow:saved[@"identity"] error:&readError];
+        if (!current && readError) { if (error) *error=readError; return NO; }
         if (!current || ![current[@"identity"] isEqual:saved[@"identity"]] || !USameFrame(current[@"frame"],saved[@"frame"]))
             return UFail(error,34,@"A window changed during origin handoff; recovery remains pending.");
     }
