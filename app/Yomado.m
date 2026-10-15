@@ -205,6 +205,7 @@ static NSString *JSONText(id object) { return JSONTextWithIdentifiers(object, NO
 - (void)preparePanelPresenter;
 - (void)updateInventory;
 - (void)beginUpdater;
+- (void)automaticUpdateStateDidChange;
 - (void)restoreUpdateWorkspace;
 - (void)restoreUpdateProfileAtIndex:(NSUInteger)index;
 - (void)refreshUpdateUI;
@@ -597,22 +598,24 @@ static NSView *YMSpacer(void) {
     [self updateInventory];
     return YES;
 }
+- (void)automaticUpdateStateDidChange {
+    if (self.automaticUpdater.status == YMAutomaticUpdateChecking && !self.updateRecoveryFailed && !self.pendingUpdateProfiles)
+        self.updateRecoveryMessage = nil;
+    // A failed startup claim may leave profiles unset but still owns a durable
+    // recovery record. Background checks must retain it for an explicit retry.
+    if (!self.automaticUpdater.busy && !self.automaticUpdater.installationPending
+        && !self.pendingUpdateProfiles && !self.updateRecoveryFailed) {
+        self.updateWorkspaceBusy = NO;
+        [self.updateRecovery cancelPreparedRestart:NULL];
+    }
+    [self refreshUpdateUI];
+    [self updateInventory];
+}
 - (void)beginUpdater {
     if (self.automaticUpdater || self.previewMode) return;
     self.automaticUpdater = [[YMAutomaticUpdater alloc] initWithHostBundle:NSBundle.mainBundle];
     __weak ADController *weakSelf = self;
-    self.automaticUpdater.stateDidChange = ^{
-        ADController *owner = weakSelf;
-        if (!owner) return;
-        if (owner.automaticUpdater.status == YMAutomaticUpdateChecking && !owner.updateRecoveryFailed && !owner.pendingUpdateProfiles)
-            owner.updateRecoveryMessage = nil;
-        if (!owner.automaticUpdater.busy && !owner.automaticUpdater.installationPending && !owner.pendingUpdateProfiles) {
-            owner.updateWorkspaceBusy = NO;
-            [owner.updateRecovery cancelPreparedRestart:NULL];
-        }
-        [owner refreshUpdateUI];
-        [owner updateInventory];
-    };
+    self.automaticUpdater.stateDidChange = ^{ [weakSelf automaticUpdateStateDidChange]; };
     self.automaticUpdater.prepareForInstallation = ^(YMUpdatePreparationCompletion completion) {
         ADController *owner = weakSelf;
         NSError *error = nil;

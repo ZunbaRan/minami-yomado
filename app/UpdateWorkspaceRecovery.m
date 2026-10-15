@@ -396,6 +396,7 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
 @property(nonatomic, strong) id<YMUpdateWorkspaceRecoveryBackend> backend;
 @property(nonatomic, copy) NSDictionary *journal;
 @property(nonatomic, copy) NSString *transaction;
+@property(nonatomic) BOOL preparedByThisInstance;
 @property(nonatomic) BOOL claimed;
 @property(nonatomic) BOOL restored;
 @property(nonatomic, copy) NSArray *restoredProfiles;
@@ -508,7 +509,7 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
         @"sourceVersion":[self.backend runningVersion],@"sourceBuild":[self.backend runningBuild],
         @"targetVersion":version,@"targetBuild":build,@"profiles":saved,@"state":state,@"origins":savedOrigins};
     if (![self writeJournal:j error:error]) return NO;
-    self.transaction=transaction; self.claimed=NO; self.restored=NO; return YES;
+    self.transaction=transaction; self.preparedByThisInstance=YES; self.claimed=NO; self.restored=NO; return YES;
 }
 - (BOOL)ownJournal:(NSError **)error {
     NSDictionary *live=[self readJournal:error];
@@ -608,7 +609,7 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
     BOOL okay=unlinkat(dir,"restart.json",0)==0;
     if (okay) okay=fsync(dir)==0; close(dir);
     if (!okay) return UFail(error,35,@"The recovery record could not be removed safely.");
-    self.journal=nil; self.transaction=nil; self.claimed=NO; return YES;
+    self.journal=nil; self.transaction=nil; self.preparedByThisInstance=NO; self.claimed=NO; return YES;
 }
 - (BOOL)completeRestoration:(NSError **)error {
     if (!self.claimed || !self.restored) return UFail(error,36,@"Restoration has not been verified yet.");
@@ -622,6 +623,9 @@ static NSArray *UOrigins(NSArray *origins, NSDictionary *state) {
 }
 - (BOOL)cancelPreparedRestart:(NSError **)error {
     if (!self.transaction) return YES;
+    // Reading a startup journal does not confer cancellation ownership. A
+    // failed claim must remain available for explicit retry or discard.
+    if (!self.preparedByThisInstance) return UFail(error,36,@"A recovery record from another instance must be retained for retry.");
     if (self.claimed || [self.journal[@"phase"] isEqual:@"claimed"]) return UFail(error,36,@"A pending recovery must be retained for retry.");
     return [self removeOwnJournal:error];
 }

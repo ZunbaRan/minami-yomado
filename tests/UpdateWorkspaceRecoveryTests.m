@@ -237,4 +237,35 @@ static void LastMomentGuards(void) {
     Check([next pendingProfilesWithError:&e].count==0 && e==nil,@"zero screen journal still claimed");
     Check([next restoreWithProfiles:@[] error:&e] && [next completeRestoration:&e],@"zero screen handoff complete");Cleanup(dir);
 }
-int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
+static void CancellationOwnership(void) {
+    NSURL *dir=Directory();FakeRecovery *b=[FakeRecovery new];YMUpdateWorkspaceRecovery *source=Recovery(dir,b);NSError *e=nil;
+    Check(Prepare(source,&e)&&[source commitPreparedRestart:&e],@"cancellation ownership setup");
+    Restart(b);
+    NSDictionary *physical=b.displays[0];NSMutableDictionary *changed=[physical mutableCopy];
+    changed[@"bounds"]=Frame(10,0,1280,900);b.displays[0]=changed;
+    YMUpdateWorkspaceRecovery *target=Recovery(dir,b);
+    Check(![target pendingProfilesWithError:&e] && e.code==32,@"startup environment failure leaves unclaimed armed recovery");
+    NSURL *file=[dir URLByAppendingPathComponent:@"restart.json"];
+    NSData *retained=[NSData dataWithContentsOfURL:file];e=nil;
+    Check(![target cancelPreparedRestart:&e] && e!=nil,@"startup reader cannot cancel a record it did not prepare");
+    Check([[NSData dataWithContentsOfURL:file] isEqual:retained] && b.writes==0,@"failed claim cleanup preserves exact recovery record without window writes");
+    b.displays[0]=physical;e=nil;
+    Check([target retryPendingProfilesWithError:&e].count==1,@"corrected environment can explicitly retry retained checkpoint");
+    Create(b);
+    Check([target restoreWithProfiles:Profiles(9) error:&e] && [target completeRestoration:&e],@"retained checkpoint completes normally");
+    Cleanup(dir);
+
+    // Cancellation ownership belongs to the instance that prepared the update,
+    // and does not impose startup's TTL on cleaning up its own stale proposal.
+    for (NSUInteger armed=0;armed<2;armed++) {
+        dir=Directory();b=[FakeRecovery new];source=Recovery(dir,b);e=nil;
+        Check(Prepare(source,&e),@"source cancellation setup");
+        if(armed)Check([source commitPreparedRestart:&e],@"source cancellation arms record");
+        b.time+=301;
+        Check([source cancelPreparedRestart:&e],@"source can cancel its own prepared or armed record after delay");
+        Check(![NSFileManager.defaultManager fileExistsAtPath:[dir URLByAppendingPathComponent:@"restart.json"].path],@"source cancellation consumes only its own record");
+        Check(Prepare(source,&e),@"source can prepare a later transaction after cancellation");
+        Check([source cancelPreparedRestart:&e],@"later source transaction acquires cancellation ownership");Cleanup(dir);
+    }
+}
+int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }

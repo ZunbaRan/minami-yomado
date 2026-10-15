@@ -182,6 +182,7 @@
 @property BOOL commitResult;
 @property NSUInteger commits;
 @property NSUInteger preparations;
+@property NSUInteger cancellations;
 @property BOOL restoreResult;
 @property NSArray *restoredOriginCheckpoints;
 @property NSMutableArray *events;
@@ -192,7 +193,7 @@
 }
 - (BOOL)restoreWithProfiles:(NSArray *)profiles error:(NSError **)error { (void)profiles; (void)error; [self.events addObject:@"restore"]; return self.restoreResult; }
 - (BOOL)completeRestoration:(NSError **)error { (void)error; [self.events addObject:@"complete"]; return YES; }
-- (BOOL)cancelPreparedRestart:(NSError **)error { (void)error; return YES; }
+- (BOOL)cancelPreparedRestart:(NSError **)error { (void)error; self.cancellations++; return YES; }
 - (BOOL)commitPreparedRestart:(NSError **)error {
     self.commits++;
     if (!self.commitResult && error) *error=[NSError errorWithDomain:@"fixture" code:1 userInfo:nil];
@@ -474,6 +475,28 @@ int main(void) {
             "pending dedicated WeChat recovery defers update before replacing its exact tracked window state");
         Expect(legacyRecovery.needsRestoreBeforeRemovingVirtualDisplay,
             "update gate leaves the dedicated recovery record untouched");
+
+        c=Controller(&t,&d,&p,&s);
+        updater=[YMControllerUpdateEngine new];
+        c.automaticUpdater=(YMAutomaticUpdater *)(id)updater;
+        journal=[YMControllerUpdateRecovery new];
+        c.updateRecovery=(YMUpdateWorkspaceRecovery *)(id)journal;
+        c.updateRecoveryFailed=YES; c.updateRecoveryMessage=@"pending recovery";
+        [c automaticUpdateStateDidChange];
+        Expect(journal.cancellations==0 && [c.updateRecoveryMessage isEqual:@"pending recovery"],
+            "idle updater retains failed startup recovery even without claimed profiles");
+        updater.status=YMAutomaticUpdateChecking;
+        [c automaticUpdateStateDidChange];
+        Expect(journal.cancellations==0 && [c.updateRecoveryMessage isEqual:@"pending recovery"],
+            "scheduled checking cannot clear a failed recovery record or explanation");
+        c.updateRecoveryFailed=NO; c.pendingUpdateProfiles=@[];
+        [c automaticUpdateStateDidChange];
+        Expect(journal.cancellations==0,"claimed recovery remains protected from updater cleanup");
+        c.pendingUpdateProfiles=nil; updater.status=YMAutomaticUpdateCancelled;
+        c.updateWorkspaceBusy=YES;
+        [c automaticUpdateStateDidChange];
+        Expect(journal.cancellations==1 && !c.updateWorkspaceBusy,
+            "ordinary cancelled preparation still releases its own checkpoint and controls");
 
         YMUpdateCompletionController *completionController=[YMUpdateCompletionController new];
         NSMutableArray *events=[NSMutableArray array]; completionController.events=events;
