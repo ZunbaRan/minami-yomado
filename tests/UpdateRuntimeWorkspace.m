@@ -227,7 +227,7 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
 }
 - (void)prepareOccupiedWorkspace:(void (^)(BOOL,NSError *))completion {
     NSError *error=nil;
-    self.record(@"occupied-preflight",@{@"accessibilityTrusted":@(AXIsProcessTrusted()),@"virtualAPIAvailable":@(VDVirtualDisplay.isAPIAvailable)});
+    self.record(@"occupied-preflight",@{@"accessibilityTrusted":@((BOOL)AXIsProcessTrusted()),@"virtualAPIAvailable":@(VDVirtualDisplay.isAPIAvailable)});
     if (!AXIsProcessTrusted() || !VDVirtualDisplay.isAPIAvailable) {
         FFail(&error,3,@"Guest Accessibility or virtual-display support is unavailable."); completion(NO,error); return;
     }
@@ -273,7 +273,7 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
         ![saved[@"height"] isEqual:@800] || [saved[@"hiDPI"] boolValue] || !saved[@"bounds"]) {
         FFail(&error,6,@"The occupied restart fixture did not receive its exact saved profile."); completion(NO,error); return;
     }
-    self.record(@"occupied-recreate",@{@"savedProfiles":profiles,@"accessibilityTrusted":@(AXIsProcessTrusted())});
+    self.record(@"occupied-recreate",@{@"savedProfiles":profiles,@"accessibilityTrusted":@((BOOL)AXIsProcessTrusted())});
     [self createWithSavedBounds:saved[@"bounds"] completion:completion];
 }
 - (BOOL)verifyRestoredWorkspace:(NSError **)error {
