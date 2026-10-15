@@ -121,6 +121,8 @@ def contains(frame, inner):
     return a >= x and b >= y and a+c <= x+w and b+d <= y+h
 
 def monitor(display_id):
+    # Covers the 60/3/3-second holds plus bounded lifecycle/capture work;
+    # the separate fixture has its own 240-second safety cap.
     deadline = time.monotonic() + 150
     with (evidence_dir / 'continuity.jsonl').open('w') as stream:
         while not monitor_stop.is_set() and time.monotonic() < deadline:
@@ -214,12 +216,15 @@ try:
         actions.append(parse_close_receipt(close_result.stdout, product_pid))
         write(f'cycle-{cycle}-closed-panel.json', wait_policy(1, False))
         before = sample(virtual['id'], f'cycle-{cycle}-accessory-before')
-        time.sleep(3)
+        hold_seconds = 60 if cycle == 1 else 3
+        time.sleep(hold_seconds)
         after = sample(virtual['id'], f'cycle-{cycle}-accessory-after')
         assert_sample(before, initial, baseline, virtual)
         assert_sample(after, initial, baseline, virtual)
         check(f'cycle {cycle}: remained Accessory', before['activationPolicy'] == after['activationPolicy'] == 1)
-        check(f'cycle {cycle}: fixture timer continued', after['fixtureState']['counter'] - before['fixtureState']['counter'] >= 6)
+        counter_delta = after['fixtureState']['counter'] - before['fixtureState']['counter']
+        check(f'cycle {cycle}: fixture timer continued', counter_delta >= hold_seconds * 2,
+              {'counterDelta': counter_delta, 'minimumCounterDelta': hold_seconds * 2, 'holdSeconds': hold_seconds})
         check(f'cycle {cycle}: actual fixture pixels changed', before['image']['fixtureSHA256'] != after['image']['fixtureSHA256'])
         check(f'cycle {cycle}: capture nonuniform', min(before['image']['distinctBytes'], after['image']['distinctBytes']) > 8)
         reopened = open_panel()
@@ -229,8 +234,10 @@ try:
         assert_regular_panel(final, initial)
         check(f'cycle {cycle}: same product panel remains visible', True, initial['productPanelWindowID'])
         check(f'cycle {cycle}: actual status-menu reopened Regular panel', final['activationPolicy'] == 0)
-        intervals.append({'cycle': cycle, 'accessoryStart': before['uptime'], 'accessoryEnd': after['uptime'],
-                          'counterDelta': after['fixtureState']['counter'] - before['fixtureState']['counter']})
+        intervals.append({'cycle': cycle, 'holdSeconds': hold_seconds,
+                          'accessoryStart': before['uptime'], 'accessoryEnd': after['uptime'],
+                          'observedIntervalSeconds': after['uptime'] - before['uptime'],
+                          'minimumCounterDelta': hold_seconds * 2, 'counterDelta': counter_delta})
     # Rename is reached from the actual card management menu after a status
     # menu reopen. The status menu itself has no direct Rename command.
     action('manage-menu')
