@@ -8,6 +8,7 @@ import plistlib
 import pwd
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -52,6 +53,9 @@ def check_guest(directory):
 
 def setup(directory):
     directory.mkdir(mode=0o700)
+    # Capture before create-keychain, which may itself change the search list.
+    original_search_list = keychain_search_list()
+    (directory / "original-search-list.json").write_text(json.dumps(original_search_list))
     password = secrets.token_hex(24)
     config = directory / "codesign.cnf"
     config.write_text("""[req]
@@ -89,10 +93,40 @@ subjectKeyIdentifier=hash
     # requests GUI authentication. Only this disposable certificate is added.
     run(["sudo", "-n", "security", "add-trusted-cert", "-d", "-r", "trustRoot", "-p", "codeSign",
          "-k", "/Library/Keychains/System.keychain", str(cert)])
+    # --keychain narrows codesign's lookup but does not replace its user search
+    # list requirement. Preserve the runner's existing entries and exact order.
+    run(["security", "list-keychains", "-d", "user", "-s", str(keychain), *original_search_list])
+    verify_signing_identity(directory, fingerprint)
+
+
+def keychain_search_list(*, timeout=30):
+    entries = shlex.split(run(["security", "list-keychains", "-d", "user"], timeout=timeout)[0])
+    if not all(Path(value).is_absolute() for value in entries):
+        raise RuntimeError("Unexpected user keychain search list")
+    return entries
+
+
+def restore_search_list(directory):
+    original = json.loads((directory / "original-search-list.json").read_text())
+    if (not isinstance(original, list) or
+            not all(isinstance(value, str) and Path(value).is_absolute() and "\x00" not in value for value in original)):
+        raise RuntimeError("Invalid original keychain search list")
+    run(["security", "list-keychains", "-d", "user", "-s", *original], timeout=8)
+    if keychain_search_list(timeout=8) != original:
+        raise RuntimeError("Original keychain search list was not restored exactly")
+
+
+def verify_signing_identity(directory, fingerprint):
+    keychain = directory / "identity.keychain-db"
     valid_identities = run(["security", "find-identity", "-v", "-p", "codesigning", str(keychain)])[0]
     identities = re.findall(r"\b[A-Fa-f0-9]{40}\b", valid_identities)
+    expected = fingerprint.upper() in {x.upper() for x in identities}
+    listed = keychain.resolve() in {Path(value).resolve() for value in keychain_search_list()}
     print("[update-runtime] temporary signing identities: " + json.dumps({
-        "validCount": len(identities), "expectedPresent": fingerprint.upper() in {x.upper() for x in identities}}), flush=True)
+        "validCount": len(identities), "expectedPresent": expected,
+        "searchListContainsPrivateKeychain": listed}), flush=True)
+    if not expected or not listed:
+        raise RuntimeError("Temporary signing identity is not available to codesign")
 
 
 def fixture_app(directory, app):
@@ -110,6 +144,7 @@ def fixture_app(directory, app):
 def sign(directory, app):
     app, _ = fixture_app(directory, app)
     identity = json.loads((directory / "identity.json").read_text())
+    verify_signing_identity(directory, identity["fingerprint"])
     framework = app / "Contents/Frameworks/Sparkle.framework"
     components = [framework / name for name in (
         "Versions/B/XPCServices/Installer.xpc", "Versions/B/XPCServices/Downloader.xpc",
@@ -184,6 +219,8 @@ def main():
     directory = check_guest(raw_directory)
     if action == "setup" and not arguments:
         setup(directory)
+    elif action == "restore-search-list" and not arguments:
+        restore_search_list(directory)
     elif action == "sign" and len(arguments) == 1:
         sign(directory, Path(arguments[0]))
     elif action == "grant" and len(arguments) == 3:

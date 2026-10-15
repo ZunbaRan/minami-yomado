@@ -110,6 +110,10 @@ PYFINGERPRINT
         -Z "$ym_code_fingerprint" /Library/Keychains/System.keychain || true
     fi
   fi
+  if [ -f "$ym_temporary/codesign/original-search-list.json" ]; then
+    ym_bounded_guest_command restore-fixture-keychain-search-list 10 python3 \
+      "$ym_root/scripts/update-runtime-guest-permissions.py" restore-search-list "$ym_temporary/codesign" || true
+  fi
   if [ -f "$ym_temporary/codesign/identity.keychain-db" ]; then
     ym_bounded_guest_command remove-fixture-keychain 10 security delete-keychain "$ym_temporary/codesign/identity.keychain-db" || true
   fi
