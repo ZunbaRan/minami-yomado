@@ -4,6 +4,9 @@
 #import <sys/stat.h>
 #import <unistd.h>
 
+extern BOOL YMUpdateIsVerifiedMenuCursorChrome(NSDictionary *candidate, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSInteger cursorLevel);
+
 static NSUInteger checks=0;
 static void Check(BOOL value, NSString *name) { checks++; if (!value) { fprintf(stderr,"FAIL %s\n",name.UTF8String); exit(1); } }
 static NSDictionary *Frame(double x,double y,double w,double h) { return @{@"x":@(x),@"y":@(y),@"width":@(w),@"height":@(h)}; }
@@ -394,4 +397,57 @@ static void MenuChromeClassification(void) {
             @"other-screen corroboration cannot bypass trusted geometry or real-window protection");
     }
 }
-int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();ReadFailureDiagnostics();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();MenuChromeClassification();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
+static void CursorMenuChromeClassification(void) {
+    NSDictionary *display=Frame(1024,0,1280,800), *band=Frame(1024,0,1280,30);
+    NSDictionary *menu=@{@"pid":@166,@"windowID":@106,@"frame":band,@"layer":@24,
+        @"onscreen":@YES,@"trustedWindowServer":@YES};
+    NSInteger cursorLevel=2147483630;
+    NSDictionary *candidate=@{@"pid":@166,@"windowID":@133,@"frame":Frame(2129,1,28,28),
+        @"layer":@(cursorLevel),@"onscreen":@YES};
+    for (NSNumber *ID in @[@133,@134]) {
+        NSMutableDictionary *copy=candidate.mutableCopy;copy[@"windowID"]=ID;
+        Check(YMUpdateIsVerifiedMenuCursorChrome(copy,display,31,24,menu,cursorLevel),
+            @"observed WindowServer cursor-level menu surfaces are not workspace windows");
+    }
+    for (NSDictionary *frame in @[Frame(1024,0,30,30),Frame(2274,0,30,30),Frame(2129,1,28,29)]) {
+        NSMutableDictionary *copy=candidate.mutableCopy;copy[@"frame"]=frame;
+        Check(YMUpdateIsVerifiedMenuCursorChrome(copy,display,31,24,menu,cursorLevel),
+            @"exact boundaries and one-point aspect difference remain inside the actual menu");
+    }
+    for (NSUInteger scenario=0;scenario<27;scenario++) {
+        NSMutableDictionary *c=candidate.mutableCopy,*m=menu.mutableCopy;NSDictionary *d=display;
+        double inset=31;NSInteger menuLevel=24,level=cursorLevel;
+        switch (scenario) {
+            case 0:c[@"frame"]=Frame(1023.999,1,28,28);break;
+            case 1:c[@"frame"]=Frame(2276.001,1,28,28);break;
+            case 2:c[@"frame"]=Frame(2129,-.001,28,28);break;
+            case 3:c[@"frame"]=Frame(2129,2.001,28,28);break;
+            case 4:c[@"frame"]=Frame(2129,0,30.001,30);break;
+            case 5:c[@"frame"]=Frame(2129,0,30,30.001);break;
+            case 6:c[@"frame"]=Frame(2129,1,28,26.999);break;
+            case 7:c[@"pid"]=@400;break;
+            case 8:m[@"trustedWindowServer"]=@NO;break;
+            case 9:c[@"layer"]=@(cursorLevel-1);break;
+            case 10:c[@"layer"]=@(cursorLevel+1);break;
+            case 11:c[@"layer"]=@0;break;
+            case 12:c[@"onscreen"]=@NO;break;
+            case 13:m=nil;break;
+            case 14:m[@"onscreen"]=@NO;break;
+            case 15:m[@"layer"]=@25;break;
+            case 16:d=Frame(1024,4,1280,800);break;
+            case 17:inset=0;break;
+            case 18:c[@"frame"]=Frame(NAN,1,28,28);break;
+            case 19:c[@"frame"]=Frame(2129,INFINITY,28,28);break;
+            case 20:c[@"frame"]=Frame(2129,1,0,28);break;
+            case 21:c[@"frame"]=Frame(2129,1,28,-1);break;
+            case 22:c[@"windowID"]=@0;break;
+            case 23:c[@"pid"]=@0;m[@"pid"]=@0;break;
+            case 24:level=menuLevel;break;
+            case 25:m[@"frame"]=Frame(1024,0,1200,30);break;
+            case 26:c[@"frame"]=band;break;
+        }
+        Check(!YMUpdateIsVerifiedMenuCursorChrome(c,d,inset,menuLevel,m,level),
+            @"unknown, application, oversized, or even slightly out-of-band surfaces remain blocked");
+    }
+}
+int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();ReadFailureDiagnostics();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();MenuChromeClassification();CursorMenuChromeClassification();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }

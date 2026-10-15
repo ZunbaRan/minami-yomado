@@ -128,6 +128,24 @@ static BOOL USystemMenuMatchesDisplay(NSDictionary *systemMenu, NSDictionary *di
     // Use the actual full-width system surface, with only rounding tolerance.
     return USameFrame(systemMenu[@"frame"],band);
 }
+// Pure classification, with the system cursor level supplied by the caller.
+// These small WindowServer surfaces hold no application workspace to restore.
+BOOL YMUpdateIsVerifiedMenuCursorChrome(NSDictionary *candidate, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSInteger cursorLevel) {
+    if (![candidate isKindOfClass:NSDictionary.class] || !YMWorkspaceGeometry(candidate[@"frame"]) ||
+        !UInteger(candidate[@"windowID"],1,UINT32_MAX) || cursorLevel<=mainMenuLevel ||
+        !USystemMenuMatchesDisplay(systemMenu,displayBounds,topInset,mainMenuLevel) ||
+        ![candidate[@"pid"] isEqual:systemMenu[@"pid"]] || ![candidate[@"onscreen"] isEqual:@YES] ||
+        ![candidate[@"layer"] isEqual:@(cursorLevel)]) return NO;
+    NSDictionary *frame=candidate[@"frame"], *band=systemMenu[@"frame"];
+    double x=[frame[@"x"] doubleValue], y=[frame[@"y"] doubleValue];
+    double width=[frame[@"width"] doubleValue], height=[frame[@"height"] doubleValue];
+    double bandX=[band[@"x"] doubleValue], bandY=[band[@"y"] doubleValue];
+    double bandWidth=[band[@"width"] doubleValue], bandHeight=[band[@"height"] doubleValue];
+    // Deliberately no rounding allowance for containment or maximum size.
+    return width<=bandHeight && height<=bandHeight && fabs(width-height)<=1 &&
+        x>=bandX && y>=bandY && x+width<=bandX+bandWidth && y+height<=bandY+bandHeight;
+}
 BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
     double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary *ownerAX,
     NSArray<NSDictionary *> *currentMenuRegions) {
@@ -317,6 +335,7 @@ static NSArray *UDisplays(NSError **error) {
     if (!raw) { UFail(error, 12, @"The complete window inventory is unavailable."); return nil; }
     NSDictionary *menuInsets=UMenuScreenInsets(displays);
     NSInteger menuLevel=CGWindowLevelForKey(kCGMainMenuWindowLevelKey);
+    NSInteger cursorLevel=CGWindowLevelForKey(kCGCursorWindowLevelKey);
     NSMutableDictionary<NSNumber *,NSMutableArray *> *systemMenus=[NSMutableDictionary dictionary];
     NSMutableArray<NSDictionary *> *currentMenuRegions=[NSMutableArray array];
     NSMutableDictionary<NSNumber *,id> *menuOwners=[NSMutableDictionary dictionary];
@@ -359,8 +378,10 @@ static NSArray *UDisplays(NSError **error) {
         for (NSDictionary *display in owned) if (YMWorkspaceIntersection(frame,display[@"bounds"])>0) owner=display;
         BOOL menuChrome=NO;
         for (NSDictionary *menu in systemMenus[owner[@"displayID"]]) {
-            if (!USameFrame(frame,menu[@"frame"])) continue;
             NSDictionary *candidate=UCGWindowMetadata(entry), *ownerAX=nil;
+            if (YMUpdateIsVerifiedMenuCursorChrome(candidate,owner[@"bounds"],
+                [menuInsets[owner[@"displayID"]] doubleValue],menuLevel,menu,cursorLevel)) { menuChrome=YES; break; }
+            if (!USameFrame(frame,menu[@"frame"])) continue;
             if ([candidate[@"layer"] isEqual:@0] && [candidate[@"onscreen"] isEqual:@NO]) {
                 NSNumber *PID=@(pid);
                 if (!menuOwners[PID]) menuOwners[PID]=UMenuOwnerSnapshot(pid) ?: NSNull.null;
