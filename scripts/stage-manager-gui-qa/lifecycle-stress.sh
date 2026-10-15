@@ -15,7 +15,9 @@ assert os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 assert sys.platform == 'darwin'
 app, helpers, evidence, source = map(pathlib.Path, sys.argv[1:])
 started = time.monotonic()
-deadline = started + 150
+cycles = int(os.environ.get('YM_QA_STRESS_CYCLES', '10'))
+assert 1 <= cycles <= 20
+deadline = started + cycles * 15
 product_pid = None
 companion = None
 panel_id = None
@@ -28,7 +30,7 @@ def write(name, obj):
 def call(args, label, check=True, timeout=12):
     remaining = deadline-time.monotonic()
     if remaining <= 0:
-        raise TimeoutError('150-second suite bound reached')
+        raise TimeoutError(f'{cycles * 15}-second suite bound reached')
     result = subprocess.run([str(a) for a in args], capture_output=True, text=True,
                             timeout=min(timeout, remaining))
     (evidence / (label+'.stdout')).write_text(result.stdout)
@@ -133,7 +135,7 @@ try:
     initial = wait_open('initial', require_focus=False)
     panel_id = panels(initial)[0]['kCGWindowNumber']
     write('ownership.json', {'productPID':product_pid,'companionPID':companion.pid,'panelWindowID':panel_id})
-    for cycle in range(1,11):
+    for cycle in range(1,cycles+1):
         prefix = f'cycle-{cycle:02d}'
         current_step = prefix+' minimize'
         call([helpers/'panel-window-actions', product_pid, 'minimize'], prefix+'-minimize')
@@ -177,7 +179,7 @@ except Exception as error:
     except Exception as capture_error:
         failures.append({'name':'failure evidence capture','error':str(capture_error)})
 finally:
-    write('summary.json', {'completed':current_step == 'complete','requestedCycles':10,
+    write('summary.json', {'completed':current_step == 'complete','requestedCycles':cycles,
           'elapsedSeconds':time.monotonic()-started,'currentStep':current_step,
           'checks':records,'failures':failures,'passed':current_step == 'complete' and not failures,
           'scope':'Disposable hosted guest only; actual product launch stderr retained; no virtual-display persistence claim.'})

@@ -76,16 +76,35 @@ func ancestors(_ node: AXUIElement) -> [AXUIElement] {
     fail("AX parent traversal bound exceeded")
 }
 func clippingEvidence(_ node: AXUIElement) -> [[String: Any]] {
-    ancestors(node).filter { [kAXScrollAreaRole, kAXWindowRole].contains(label($0, kAXRoleAttribute)) }.map {
-        ["role": label($0, kAXRoleAttribute), "bounds": axBounds($0).map(rect) ?? []]
+    var result: [[String: Any]] = []
+    for ancestor in ancestors(node) {
+        let role = label(ancestor, kAXRoleAttribute)
+        if [kAXScrollAreaRole, kAXWindowRole, kAXMenuRole].contains(role) {
+            result.append(["role": role, "bounds": axBounds(ancestor).map(rect) ?? []])
+        }
+        // Native popup menus are separate surfaces. Their owner window and
+        // its scroll views are not clipping ancestors of the popup surface.
+        if role == kAXMenuRole { break }
     }
+    return result
+}
+func isWithinOnlineDisplay(_ frame: CGRect) -> Bool {
+    var displays = [CGDirectDisplayID](repeating: 0, count: 128), count: UInt32 = 0
+    guard CGGetOnlineDisplayList(128, &displays, &count) == .success, count < 128 else { return false }
+    return displays.prefix(Int(count)).contains { CGDisplayIsActive($0) != 0 && CGDisplayBounds($0).contains(frame) }
 }
 func fullyVisible(_ node: AXUIElement) -> Bool {
-    guard let frame = axBounds(node), CGDisplayBounds(CGMainDisplayID()).contains(frame),
+    guard let frame = axBounds(node), isWithinOnlineDisplay(frame),
           (attr(node, "AXHidden") as? NSNumber)?.boolValue != true else { return false }
     for ancestor in ancestors(node) {
         if (attr(ancestor, "AXHidden") as? NSNumber)?.boolValue == true { return false }
         let role = label(ancestor, kAXRoleAttribute)
+        if role == kAXMenuRole {
+            // Validate the live popup's own viewport, then stop before its
+            // owning NSWindow. A menu may legitimately extend past that window.
+            guard let menuFrame = axBounds(ancestor), menuFrame.contains(frame) else { return false }
+            return true
+        }
         if role == kAXWindowRole && (attr(ancestor, kAXMinimizedAttribute) as? NSNumber)?.boolValue == true { return false }
         if role == kAXScrollAreaRole || role == kAXWindowRole {
             guard let clip = axBounds(ancestor), clip.contains(frame) else { return false }
