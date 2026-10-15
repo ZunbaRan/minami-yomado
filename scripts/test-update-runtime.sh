@@ -126,7 +126,7 @@ cat > "$ym_temporary/serve.py" <<'PY'
 import sys,time,os,faulthandler
 faulthandler.enable();faulthandler.dump_traceback_later(10,repeat=False)
 print('server-process-started',os.getpid(),flush=True)
-import http.server,ssl
+import http.server,ssl,socketserver
 from pathlib import Path
 print('server-imports-complete',flush=True)
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -137,8 +137,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 output.flush()
                 if self.path.endswith('.zip'): time.sleep(0.01)
         except (BrokenPipeError, ConnectionResetError): pass
+class LocalFixtureServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # This loopback-only fixture has a fixed TLS hostname. HTTPServer's
+        # reverse-DNS lookup is unnecessary and can stall disposable runners.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name='localhost'
+        self.server_port=self.server_address[1]
 print('server-bind-start',flush=True)
-server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server = LocalFixtureServer(('127.0.0.1', 0), Handler)
 print('server-bind-complete',flush=True)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[1], sys.argv[2])

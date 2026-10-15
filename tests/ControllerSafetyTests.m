@@ -212,6 +212,11 @@
     return self.adoptedNonemptyOrigins;
 }
 @end
+@interface YMControllerLegacyRecovery : NSObject
+@property BOOL needsRestoreBeforeRemovingVirtualDisplay;
+@end
+@implementation YMControllerLegacyRecovery
+@end
 @interface YMUpdateCompletionController : YMFakeController
 @property NSMutableArray *events;
 @property NSError *completionError;
@@ -460,6 +465,15 @@ int main(void) {
         c.displayOperationInProgress=NO; c.updateRecoveryFailed=YES;
         Expect(![c prepareUpdateRestart:NULL] && journal.preparations==preparations,
             "failed recovery cannot be overwritten by another update checkpoint");
+        c.updateRecoveryFailed=NO;
+        YMControllerLegacyRecovery *legacyRecovery=[YMControllerLegacyRecovery new];
+        legacyRecovery.needsRestoreBeforeRemovingVirtualDisplay=YES;
+        c.windowRecovery=(YMWindowRecovery *)(id)legacyRecovery;
+        NSError *legacyError=nil;
+        Expect(![c prepareUpdateRestart:&legacyError] && legacyError.code==106 && journal.preparations==preparations,
+            "pending dedicated WeChat recovery defers update before replacing its exact tracked window state");
+        Expect(legacyRecovery.needsRestoreBeforeRemovingVirtualDisplay,
+            "update gate leaves the dedicated recovery record untouched");
 
         YMUpdateCompletionController *completionController=[YMUpdateCompletionController new];
         NSMutableArray *events=[NSMutableArray array]; completionController.events=events;

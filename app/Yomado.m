@@ -572,6 +572,14 @@ static NSView *YMSpacer(void) {
     return profiles;
 }
 - (BOOL)prepareUpdateRestart:(NSError **)error {
+    // The dedicated WeChat recovery path still retains its exact tracked AX
+    // window and pause state in this process. Do not replace that protection
+    // with a generic window journal or silently reselect a window after restart.
+    if (self.windowRecovery.needsRestoreBeforeRemovingVirtualDisplay) {
+        if (error) *error = [NSError errorWithDomain:YMAutomaticUpdaterErrorDomain code:106
+            userInfo:@{NSLocalizedDescriptionKey:@"微信还有待恢复记录，请先让微信返回原显示器，再重新检查更新。"}];
+        return NO;
+    }
     if (self.previewMode || self.displayOperationInProgress || self.appOperationInProgress
         || self.topologyRecoverySnapshot || self.armed || self.preparing || self.restoring
         || self.layoutChangedForTrial || self.recoveryRequested || self.updateRecoveryFailed || self.window.attachedSheet) {
