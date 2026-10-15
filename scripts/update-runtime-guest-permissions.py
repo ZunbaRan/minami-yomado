@@ -17,6 +17,8 @@ def run(command, *, data=None, timeout=30):
     label = Path(command[0]).name
     if label in {"security", "openssl"}:
         label += " " + command[1]
+    elif label == "codesign":
+        label += " " + Path(command[-1]).name
     print("[update-runtime] guest identity command: " + label, flush=True)
     try:
         result = subprocess.run(command, input=data, capture_output=True, text=True, timeout=timeout)
@@ -24,6 +26,14 @@ def run(command, *, data=None, timeout=30):
         raise RuntimeError(f"guest setup command {label} timed out") from None
     if result.returncode:
         # Keep private temporary key locations/password arguments out of logs.
+        if Path(command[0]).name == "codesign":
+            # codesign receives no password. Retain its error reason while
+            # suppressing temporary paths and bounding arbitrary diagnostics.
+            diagnostic = result.stderr
+            for argument in sorted((x for x in command if x.startswith("/")), key=len, reverse=True):
+                diagnostic = diagnostic.replace(argument, "<fixture-path>")
+            diagnostic = re.sub(r"/(?:Users|private|var|tmp)/[^\n:]*", "<fixture-path>", diagnostic)
+            print("[update-runtime] codesign diagnostic: " + diagnostic[:1600], file=sys.stderr, flush=True)
         raise RuntimeError(f"guest setup command {label} exited {result.returncode}")
     return result.stdout, result.stderr
 
@@ -79,6 +89,10 @@ subjectKeyIdentifier=hash
     # requests GUI authentication. Only this disposable certificate is added.
     run(["sudo", "-n", "security", "add-trusted-cert", "-d", "-r", "trustRoot", "-p", "codeSign",
          "-k", "/Library/Keychains/System.keychain", str(cert)])
+    valid_identities = run(["security", "find-identity", "-v", "-p", "codesigning", str(keychain)])[0]
+    identities = re.findall(r"\b[A-Fa-f0-9]{40}\b", valid_identities)
+    print("[update-runtime] temporary signing identities: " + json.dumps({
+        "validCount": len(identities), "expectedPresent": fingerprint.upper() in {x.upper() for x in identities}}), flush=True)
 
 
 def fixture_app(directory, app):
