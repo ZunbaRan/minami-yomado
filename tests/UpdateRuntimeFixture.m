@@ -2,6 +2,7 @@
 #import <AppKit/AppKit.h>
 #import "AutomaticUpdater.h"
 #import "UpdateWorkspaceRecovery.h"
+#import "UpdateRuntimeWorkspace.h"
 #import <fcntl.h>
 #import <unistd.h>
 
@@ -14,6 +15,9 @@
 @property(nonatomic, copy) NSString *scenario;
 @property(nonatomic, copy) NSString *build;
 @property(nonatomic) BOOL cancellationSent;
+@property(nonatomic, strong) YMUpdateRuntimeWorkspace *workspace;
+- (void)beginUpdate;
+- (void)completeRecovery:(NSArray<NSDictionary *> *)profiles;
 - (void)record:(NSString *)event values:(NSDictionary *)values;
 @end
 
@@ -55,23 +59,53 @@
         backend:backend];
     [self record:@"launched" values:@{@"bundleID":bundle.bundleIdentifier,
         @"windowID":@(self.window.windowNumber), @"ownedDisplayCount":@0}];
+    if ([self.scenario isEqualToString:@"occupied"]) {
+        __weak YMUpdateRuntimeFixture *owner=self;
+        self.workspace=[[YMUpdateRuntimeWorkspace alloc] initWithDirectory:self.directory
+            workPID:[[bundle objectForInfoDictionaryKey:@"YMFixtureWorkPID"] intValue]
+            probePID:[[bundle objectForInfoDictionaryKey:@"YMFixtureProbePID"] intValue]
+            backend:backend record:^(NSString *event,NSDictionary *values) { [owner record:event values:values]; }];
+    }
     if ([self.build isEqualToString:@"2"]) {
-        NSError *error = nil;
-        NSArray *profiles = [self.recovery pendingProfilesWithError:&error];
-        BOOL restored = profiles != nil && profiles.count == 0 && !error &&
-            [self.recovery restoreWithProfiles:profiles error:&error] &&
-            [self.recovery completeRestoration:&error];
-        [self record:restored ? @"updated-and-recovered" : @"recovery-failed"
-              values:@{@"restored":@(restored), @"errorDomain":error.domain ?: @"", @"errorCode":@(error.code)}];
+        NSError *error=nil;
+        NSArray *profiles=[self.recovery pendingProfilesWithError:&error];
+        if (!profiles || error || (!self.workspace && profiles.count)) {
+            [self record:@"recovery-failed" values:@{@"errorDomain":error.domain ?: @"",@"errorCode":@(error.code)}]; return;
+        }
+        if (self.workspace) {
+            [self.workspace recreateProfiles:profiles completion:^(BOOL ready,NSError *failure) {
+                if (ready) [self completeRecovery:self.workspace.profiles];
+                else [self record:@"recovery-failed" values:@{@"errorDomain":failure.domain ?: @"",@"errorCode":@(failure.code)}];
+            }];
+        } else [self completeRecovery:profiles];
         return;
     }
+    if (self.workspace) {
+        [self.workspace prepareOccupiedWorkspace:^(BOOL ready,NSError *failure) {
+            if (ready) [self beginUpdate];
+            else [self record:@"fixture-failure" values:@{@"errorDomain":failure.domain ?: @"",@"errorCode":@(failure.code)}];
+        }];
+    } else [self beginUpdate];
+}
+- (void)completeRecovery:(NSArray<NSDictionary *> *)profiles {
+    NSError *error=nil;
+    BOOL restored=[self.recovery restoreWithProfiles:profiles error:&error] &&
+        (!self.workspace || [self.workspace verifyRestoredWorkspace:&error]) &&
+        [self.recovery completeRestoration:&error];
+    BOOL consumed=![NSFileManager.defaultManager fileExistsAtPath:
+        [self.directory stringByAppendingPathComponent:@"journal/restart.json"]];
+    [self record:restored && consumed ? @"updated-and-recovered" : @"recovery-failed"
+        values:@{@"restored":@(restored),@"journalConsumed":@(consumed),@"errorDomain":error.domain ?: @"",@"errorCode":@(error.code)}];
+}
+- (void)beginUpdate {
+    NSBundle *bundle=NSBundle.mainBundle;
     self.updater = [[YMAutomaticUpdater alloc] initWithHostBundle:bundle];
     __weak YMUpdateRuntimeFixture *weakSelf = self;
     self.updater.stateDidChange = ^{
         YMUpdateRuntimeFixture *owner = weakSelf;
         [owner record:@"updater-state" values:@{@"status":@(owner.updater.status),
             @"progress":@(owner.updater.progress), @"busy":@(owner.updater.busy),
-            @"authorized":@(owner.updater.installationAuthorized)}];
+            @"authorized":@(owner.updater.installationAuthorized), @"userInitiated":@(owner.updater.userInitiated)}];
         if ([owner.scenario isEqualToString:@"cancel"] && !owner.cancellationSent && owner.updater.canCancel &&
             owner.updater.status == YMAutomaticUpdateDownloading && owner.updater.progress > 0) {
             owner.cancellationSent = YES;
@@ -95,7 +129,7 @@
             return;
         }
         NSError *error = nil;
-        BOOL ready = [owner.recovery prepareRestartWithProfiles:@[] targetVersion:owner.updater.latestVersion
+        BOOL ready = [owner.recovery prepareRestartWithProfiles:owner.workspace ? owner.workspace.profiles : @[] targetVersion:owner.updater.latestVersion
             targetBuild:owner.updater.latestBuild originCheckpoints:@[] error:&error];
         [owner record:@"workspace-prepared" values:@{@"ready":@(ready), @"errorCode":@(error.code)}];
         completion(ready, error);
@@ -105,7 +139,15 @@
         [self record:@"start-failed" values:@{@"domain":error.domain ?: @"", @"code":@(error.code)}];
         return;
     }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [weakSelf.updater checkNow]; });
+    if ([self.scenario isEqualToString:@"automatic"]) {
+        [self record:@"automatic-scheduler-armed" values:@{@"enabled":@(self.updater.automaticUpdatesEnabled)}];
+        // Let Sparkle's real automatic scheduler start its first cycle. This
+        // scenario never calls checkNow or directly invokes a delegate callback.
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(), ^{
+            [weakSelf record:@"manual-check-requested" values:@{}]; [weakSelf.updater checkNow];
+        });
+    }
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     (void)sender;

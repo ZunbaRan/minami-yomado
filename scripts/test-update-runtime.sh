@@ -15,19 +15,27 @@ ym_evidence="$(cd "$ym_evidence" && pwd -P)"
 ym_sparkle="$("$ym_root/scripts/fetch-sparkle.sh")"
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -g0 -mmacosx-version-min=14.0 \
   -ffile-prefix-map="$ym_root"=. -fmacro-prefix-map="$ym_root"=. \
-  -I "$ym_root/app" -F "$ym_sparkle" \
+  -I "$ym_root/app" -I "$ym_root/bridge" -F "$ym_sparkle" \
   "$ym_root/tests/UpdateRuntimeFixture.m" "$ym_root/app/AutomaticUpdater.m" \
-  "$ym_root/app/UpdateWorkspaceRecovery.m" -framework AppKit -framework ApplicationServices \
+  "$ym_root/app/UpdateWorkspaceRecovery.m" "$ym_root/tests/UpdateRuntimeWorkspace.m" \
+  "$ym_root/bridge/VDVirtualDisplay.m" "$ym_root/bridge/YMDisplayTopology.m" \
+  -framework ColorSync -framework AppKit -framework ApplicationServices \
   -framework CoreGraphics -framework Sparkle -Wl,-rpath,@executable_path/../Frameworks \
   -o "$ym_evidence/UpdateRuntimeFixture"
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -g0 -mmacosx-version-min=14.0 \
+  -ffile-prefix-map="$ym_root"=. -fmacro-prefix-map="$ym_root"=. \
+  "$ym_root/tests/UpdateRuntimeWindow.m" -framework AppKit -framework CoreGraphics \
+  -o "$ym_evidence/UpdateRuntimeWindow"
 if [ "$ym_build_only" = true ]; then printf 'Fixture compiled; no application was launched.\n'; exit 0; fi
 
 ym_temporary="$(mktemp -d "$RUNNER_TEMP/yomado-update-runtime.XXXXXX")"
 ym_ca_name="yomado CI Update Test ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 ym_server_pid=""
 ym_fixture_pid=""
+ym_window_pids=""
 ym_cleanup() {
   if [ -n "$ym_fixture_pid" ]; then kill "$ym_fixture_pid" 2>/dev/null || true; fi
+  for ym_pid in $ym_window_pids; do kill "$ym_pid" 2>/dev/null || true; done
   if [ -n "$ym_server_pid" ]; then kill "$ym_server_pid" 2>/dev/null || true; fi
   if [ -f "$ym_temporary/ca.crt" ]; then
     sudo security remove-trusted-cert -d "$ym_temporary/ca.crt" >/dev/null 2>&1 || true
@@ -35,7 +43,7 @@ ym_cleanup() {
   fi
   rm -rf "$ym_temporary"
   # Application bundles and executable fixtures are not review artifacts.
-  rm -f "$ym_evidence/UpdateRuntimeFixture"
+  rm -f "$ym_evidence/UpdateRuntimeFixture" "$ym_evidence/UpdateRuntimeWindow"
 }
 trap ym_cleanup EXIT
 umask 077
@@ -97,7 +105,7 @@ ym_sign_bundle() {
   codesign --verify --deep --strict "$ym_app"
 }
 ym_result=0
-for ym_case in update tampered-feed tampered-archive cancel gate-veto offline; do
+for ym_case in update tampered-feed tampered-archive cancel gate-veto offline automatic occupied; do
   ym_case_evidence="$ym_evidence/$ym_case"
   ym_case_root="$ym_temporary/$ym_case"
   mkdir -p "$ym_case_evidence" "$ym_case_root/server" "$ym_case_root/install"
@@ -109,20 +117,44 @@ for ym_case in update tampered-feed tampered-archive cancel gate-veto offline; d
   for ym_wait in $(seq 1 50); do [ -s "$ym_case_root/port" ] && break; sleep .1; done
   ym_port="$(cat "$ym_case_root/port")"
   ym_feed="https://localhost:$ym_port/appcast.xml"
+  ym_work_pid=0
+  ym_probe_pid=0
+  if [ "$ym_case" = occupied ]; then
+    for ym_role in work-window physical-probe; do
+      ym_window_app="$ym_case_root/$ym_role.app"
+      mkdir -p "$ym_window_app/Contents/MacOS"
+      cp "$ym_evidence/UpdateRuntimeWindow" "$ym_window_app/Contents/MacOS/UpdateRuntimeWindow"
+      python3 - "$ym_window_app/Contents/Info.plist" "$ym_role" "$ym_case_evidence/$ym_role.jsonl" <<'PYWINDOW'
+import plistlib,sys
+path,role,sample=sys.argv[1:]
+with open(path,'wb') as f:plistlib.dump({'CFBundleIdentifier':'dev.chekusu.yomado.fixture.window.'+role,
+ 'CFBundleExecutable':'UpdateRuntimeWindow','CFBundleName':role,'CFBundlePackageType':'APPL',
+ 'CFBundleVersion':'1','CFBundleShortVersionString':'1.0','NSPrincipalClass':'NSApplication',
+ 'LSMinimumSystemVersion':'14.0','YMHostedDisposableFixture':True,'YMFixtureWindowRole':role,'YMFixtureSamplePath':sample},f)
+PYWINDOW
+      codesign --force --sign - "$ym_window_app" >> "$ym_case_evidence/signatures.log" 2>&1
+      "$ym_window_app/Contents/MacOS/UpdateRuntimeWindow" > "$ym_case_evidence/$ym_role.stdout" 2> "$ym_case_evidence/$ym_role.stderr" &
+      ym_window_pid=$!
+      ym_window_pids="$ym_window_pids $ym_window_pid"
+      if [ "$ym_role" = work-window ]; then ym_work_pid=$ym_window_pid; else ym_probe_pid=$ym_window_pid; fi
+      for ym_wait in $(seq 1 50); do [ -s "$ym_case_evidence/$ym_role.jsonl" ] && break; sleep .1; done
+    done
+  fi
   for ym_build in 1 2; do
     ym_app="$ym_case_root/build-$ym_build/YomadoUpdateFixture.app"
     mkdir -p "$ym_app/Contents/MacOS" "$ym_app/Contents/Frameworks"
     cp "$ym_evidence/UpdateRuntimeFixture" "$ym_app/Contents/MacOS/UpdateRuntimeFixture"
     ditto --norsrc --noextattr "$ym_sparkle/Sparkle.framework" "$ym_app/Contents/Frameworks/Sparkle.framework"
-    python3 - "$ym_app/Contents/Info.plist" "$ym_build" "$ym_case" "$ym_public" "$ym_feed" "$ym_case_evidence" <<'PY'
+    python3 - "$ym_app/Contents/Info.plist" "$ym_build" "$ym_case" "$ym_public" "$ym_feed" "$ym_case_evidence" "$ym_work_pid" "$ym_probe_pid" <<'PY'
 import plistlib,sys
-p,build,scenario,key,feed,evidence=sys.argv[1:]
+p,build,scenario,key,feed,evidence,workpid,probepid=sys.argv[1:]
 info={'CFBundleIdentifier':'dev.chekusu.yomado.fixture.'+scenario,
       'CFBundleExecutable':'UpdateRuntimeFixture','CFBundleName':'YomadoUpdateFixture',
       'CFBundlePackageType':'APPL','CFBundleVersion':build,'CFBundleShortVersionString':'1.'+str(int(build)-1),
       'LSMinimumSystemVersion':'14.0','NSPrincipalClass':'NSApplication','NSHighResolutionCapable':True,
-      'SUPublicEDKey':key,'SUFeedURL':feed,'SUEnableAutomaticChecks':False,'SUAutomaticallyUpdate':False,
+      'SUPublicEDKey':key,'SUFeedURL':feed,'SUEnableAutomaticChecks':scenario=='automatic','SUAutomaticallyUpdate':False,
       'SURequireSignedFeed':True,'SUVerifyUpdateBeforeExtraction':True,'SUSendProfileInfo':False,
+      'YMFixtureWorkPID':int(workpid),'YMFixtureProbePID':int(probepid),
       'YMHostedDisposableFixture':True,'YMFixtureEvidenceDirectory':evidence,'YMFixtureScenario':scenario}
 with open(p,'wb') as f:plistlib.dump(info,f)
 PY
@@ -174,7 +206,7 @@ while time.monotonic()<end:
             try:records.append(json.loads(line))
             except ValueError:pass
     seen={r['event'] for r in records}
-    done=('updated-and-recovered' in seen or 'recovery-failed' in seen) if case=='update' else (
+    done=('updated-and-recovered' in seen or 'recovery-failed' in seen or 'fixture-failure' in seen) if case in ('update','automatic','occupied') else (
         'updater-error' in seen or (case=='cancel' and 'cancel-requested' in seen))
     if done:
         terminal=terminal or time.monotonic()
@@ -182,6 +214,11 @@ while time.monotonic()<end:
     time.sleep(.2)
 PY
   screencapture -x "$ym_case_evidence/desktop.png" 2> "$ym_case_evidence/screenshot.log" || true
+  python3 - "$ym_case_evidence/observation-end.json" <<'PYEND'
+import json,sys,time
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({'time':time.time()})+'\n')
+PYEND
   # Stop only fixture PIDs recorded by this test, including the relaunched copy.
   python3 - "$ym_case_evidence/events.jsonl" "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" <<'PY'
 from pathlib import Path
@@ -204,13 +241,39 @@ seen={r['event'] for r in events};build=plistlib.loads((app/'Contents/Info.plist
 errors=[r for r in events if r['event']=='updater-error'];old=[r for r in events if r['event']=='launched' and r['build']=='1']
 new=[r for r in events if r['event']=='launched' and r['build']=='2'];log=(d/'server.log').read_text()
 checks={'old-launched':len(old)==1,'no-start-or-fixture-failure':not seen.intersection({'start-failed','fixture-failure'})}
-if case=='update':
+if case in ('update','automatic','occupied'):
     checks.update({'installed-build2':build=='2','new-process':len(new)==1 and old and new[0]['pid']!=old[0]['pid'],
       'workspace-prepared':any(r['event']=='workspace-prepared' and r['ready'] for r in events),
       'termination-committed':any(r['event']=='termination-gate' and r['committed'] for r in events),
-      'recovered-after-install':'updated-and-recovered' in seen,'archive-requested':'GET /update.zip HTTP' in log,
+      'recovered-after-install':any(r['event']=='updated-and-recovered' and r.get('journalConsumed') for r in events),'archive-requested':'GET /update.zip HTTP' in log,
       'no-updater-errors':not errors,
       'installed-signature-valid':subprocess.run(['codesign','--verify','--deep','--strict',str(app)],capture_output=True).returncode==0})
+    if case=='automatic':
+        checks['scheduled-automatically']=any(r['event']=='automatic-scheduler-armed' and r['enabled'] for r in events)
+        checks['no-manual-check']='manual-check-requested' not in seen
+        checks['background-download']=any(r['event']=='updater-state' and r.get('status')==2 and not r.get('userInitiated',True) for r in events)
+    if case=='occupied':
+        ready=[r for r in events if r['event']=='occupied-ready']
+        verified=[r for r in events if r['event']=='occupied-verified']
+        checks['occupied-prepared-once']=len(ready)==1 and len(ready[0]['profiles'])==1
+        checks['occupied-verified-once']=len(verified)==1 and verified[0]['matches']
+        if ready and verified:
+            baseline=ready[0]; after=verified[0]
+            checks['same-work-identity']=baseline['work']['identity']==after['currentWork']['identity']
+            checks['same-work-frame']=baseline['work']['frame']==after['currentWork']['frame']
+            checks['same-probe-identity-frame']=baseline['probe']==after['currentProbe']
+            end=json.loads((d/'observation-end.json').read_text())['time']
+            samples={role:[r for x in (d/(role+'.jsonl')).read_text().splitlines() if baseline['time'] <= (r:=json.loads(x))['time'] <= end]
+                     for role in ('work-window','physical-probe')}
+            for role,records in samples.items():
+                expected=baseline['work' if role=='work-window' else 'probe']
+                checks[role+'-same-process-window']=bool(records) and all(
+                    r['pid']==expected['identity']['pid'] and r['windowID']==expected['identity']['windowID'] and r['onscreen'] for r in records)
+                checks[role+'-continued-rendering']=len(records)>10 and records[-1]['counter']>records[0]['counter']+10
+                stable=[r for r in records if r['time']>=after['time']+.5]
+                checks[role+'-stable-after-recovery']=len(stable)>=5 and all(r['frame']==expected['frame'] for r in stable)
+            checks['screenshots-captured']=all((d/name).is_file() and (d/name).stat().st_size>1000 for name in ('occupied-before.png','occupied-after.png'))
+            checks['physical-probe-never-moved']=all(r['frame']==baseline['probe']['frame'] for r in samples['physical-probe'])
 else:
     checks.update({'kept-build1':build=='1','never-relaunched-new':not new,
       'never-authorized-install':not any(r.get('authorized') for r in events),'no-termination-commit':'termination-gate' not in seen})
@@ -221,10 +284,12 @@ else:
         checks['signature-rejection']=any(e['domain']=='SUSparkleErrorDomain' and e['code'] in (3001,3002) for r in errors for e in r.get('chain',[]))
         checks['archive-fetch-boundary']=('GET /update.zip HTTP' in log) == (case=='tampered-archive')
 report={'scenario':case,'checks':checks,'passed':all(checks.values()),'installedBuild':build,
-        'scope':'Real updater and native zero-owned-display journal. Ad hoc fixture signatures; not Developer ID/notarized acceptance or occupied workspace recovery.'}
+        'scope':'Real updater with native recovery and one surviving window plus untouched physical probe.' if case=='occupied' else 'Real updater and native zero-owned-display journal. Ad hoc fixture signatures; not Developer ID/notarized acceptance.'}
 (d/'result.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report));sys.exit(0 if report['passed'] else 1)
 PY
   then ym_result=1; fi
+  for ym_pid in $ym_window_pids; do kill "$ym_pid" 2>/dev/null || true; done
+  ym_window_pids=""
   if [ -n "$ym_server_pid" ]; then kill "$ym_server_pid"; wait "$ym_server_pid" 2>/dev/null || true; ym_server_pid=""; fi
 done
 exit "$ym_result"

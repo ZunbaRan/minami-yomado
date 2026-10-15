@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "UpdateWorkspaceRecovery.h"
+#import "AppWorkspacePolicy.h"
 #import <sys/stat.h>
 #import <unistd.h>
 
@@ -169,4 +170,71 @@ static void EmptyAndPartial(void) {
     b.displays[1]=Display(9,@"new-owned",NO,1280,1920,1080);
     Check([next restoreWithProfiles:Profiles(9) error:&e] && [next completeRestoration:&e],@"empty restore");Cleanup(dir);
 }
-int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
+static void GeometryAndOriginSelection(void) {
+    NSArray *owned=@[@{@"displayID":@2,@"bounds":Frame(1280,0,1920,1080)}];
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(50,50,500,300),owned)==YMUpdateWindowOutsideOwned,@"fully physical window excluded");
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(1400,50,500,300),owned)==YMUpdateWindowContainedInOwned,@"fully virtual window saved");
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(1000,50,500,300),owned)==YMUpdateWindowCrossesOwnedBoundary,@"physical-majority overlap blocks update");
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(1200,50,500,300),owned)==YMUpdateWindowCrossesOwnedBoundary,@"virtual-majority overlap blocks update");
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(780,50,500,300),owned)==YMUpdateWindowOutsideOwned,@"touching edge is not overlap");
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(1280,0,1920,1080),owned)==YMUpdateWindowContainedInOwned,@"exact owned bounds");
+    NSArray *pair=[owned arrayByAddingObject:@{@"displayID":@3,@"bounds":Frame(3200,0,1920,1080)}];
+    Check(YMUpdateWindowRelationToOwnedDisplays(Frame(3000,50,500,300),pair)==YMUpdateWindowCrossesOwnedBoundary,@"spanning two owned blocks");
+    Check(YMUpdateWindowRelationToOwnedDisplays(@{},owned)==YMUpdateWindowCrossesOwnedBoundary,@"unknown geometry fails closed");
+    NSDictionary *current=@{@"pid":@400,@"windowID":@42,@"displayID":@2};
+    Check([YMWorkspaceCheckpointWindow(400,42,@[current],@[@2]) isEqual:current],@"exact existing origin handed off");
+    Check(!YMWorkspaceCheckpointWindow(400,41,@[current],@[@2]),@"closed ID origin not handed off");
+    Check(!YMWorkspaceCheckpointWindow(399,42,@[current],@[@2]),@"another process origin not handed off");
+    Check(!YMWorkspaceCheckpointWindow(400,42,@[@{@"pid":@400,@"windowID":@42,@"displayID":@1}],@[@2]),@"manual physical return origin excluded");
+    Check(!YMWorkspaceCheckpointWindow(400,42,@[@{@"pid":@400,@"windowID":@43,@"displayID":@2}],@[@2]),@"replacement window does not inherit old origin");
+    Check(!YMWorkspaceCheckpointWindow(400,42,@[current,current],@[@2]),@"ambiguous current observation not exported");
+}
+static void MalformedShapes(void) {
+    for(NSUInteger kind=0;kind<9;kind++) {
+        NSURL *dir=Directory();FakeRecovery *b=[FakeRecovery new];YMUpdateWorkspaceRecovery *r=Recovery(dir,b);NSError *e=nil;
+        Check(Prepare(r,&e),@"malformed setup");NSURL *file=[dir URLByAppendingPathComponent:@"restart.json"];
+        NSMutableDictionary *j=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:file] options:NSJSONReadingMutableContainers error:NULL];
+        if(kind==0)j[@"transaction"]=@3;
+        if(kind==1)j[@"state"][@"displays"][0]=@3;
+        if(kind==2)j[@"state"][@"windows"][0]=@3;
+        if(kind==3)j[@"origins"][0][@"origin"]=@3;
+        if(kind==4)j[@"state"][@"windows"][0][@"identity"]=@3;
+        if(kind==5)j[@"state"][@"displays"][0][@"mode"]=@3;
+        if(kind==6)j[@"profiles"][0]=@3;
+        if(kind==7)j[@"state"][@"displays"][0][@"bounds"]=@3;
+        if(kind==8)j[@"state"][@"windows"][0][@"privatePath"]=@"PRIVATE_CANARY_DO_NOT_PERSIST";
+        [[NSJSONSerialization dataWithJSONObject:j options:0 error:NULL] writeToURL:file atomically:NO];chmod(file.fileSystemRepresentation,0600);
+        Restart(b);YMUpdateWorkspaceRecovery *next=Recovery(dir,b);e=nil;
+        Check(![next pendingProfilesWithError:&e] && e,@"malformed journal returns error without exception");Cleanup(dir);
+    }
+}
+static void LastMomentGuards(void) {
+    for(NSUInteger kind=0;kind<5;kind++) {
+        NSURL *dir=Directory();FakeRecovery *b=[FakeRecovery new];YMUpdateWorkspaceRecovery *r=Recovery(dir,b);NSError *e=nil;
+        Check(Prepare(r,&e)&&[r commitPreparedRestart:&e],@"last moment setup");Restart(b);YMUpdateWorkspaceRecovery *next=Recovery(dir,b);
+        Check([next pendingProfilesWithError:&e]!=nil,@"last moment claim");Create(b);
+        Check([next verifyRestorationEnvironmentWithProfiles:Profiles(9) error:&e],@"record recreated identity");
+        if(kind<2) {
+            NSMutableDictionary *d=[b.displays[1] mutableCopy];
+            if(kind==0)d[@"identity"]=@"reused-output-ID";
+            if(kind==1){NSMutableDictionary *m=[d[@"mode"] mutableCopy];m[@"refresh"]=@75;d[@"mode"]=m;}
+            b.displays[1]=d;
+            Check(![next restoreWithProfiles:Profiles(9) error:&e] && b.writes==0,@"fresh owned identity and full mode guard");
+        } else {
+            Check([next restoreWithProfiles:Profiles(9) error:&e],@"restore before final handoff guard");
+            if(kind==2)b.windows[@42][@"frame"]=Frame(1600,100,500,300);
+            if(kind==3)[b.windows removeObjectForKey:@43];
+            if(kind==4){NSMutableDictionary *d=[b.displays[0] mutableCopy];d[@"rotation"]=@90;b.displays[0]=d;}
+            Check(![next completeRestoration:&e],@"completion checks handoff state again");
+            Check([NSFileManager.defaultManager fileExistsAtPath:[dir URLByAppendingPathComponent:@"restart.json"].path],@"handoff failure retains journal");
+        }
+        Cleanup(dir);
+    }
+    NSURL *dir=Directory();FakeRecovery *b=[FakeRecovery new];[b.displays removeLastObject];[b.windows removeAllObjects];
+    YMUpdateWorkspaceRecovery *r=Recovery(dir,b);NSError *e=nil;
+    Check([r prepareRestartWithProfiles:@[] targetVersion:@"1.1" targetBuild:@"11" originCheckpoints:@[] error:&e] && [r commitPreparedRestart:&e],@"zero owned screens update");
+    b.version=@"1.1";b.build=@"11";YMUpdateWorkspaceRecovery *next=Recovery(dir,b);
+    Check([next pendingProfilesWithError:&e].count==0 && e==nil,@"zero screen journal still claimed");
+    Check([next restoreWithProfiles:@[] error:&e] && [next completeRestoration:&e],@"zero screen handoff complete");Cleanup(dir);
+}
+int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
