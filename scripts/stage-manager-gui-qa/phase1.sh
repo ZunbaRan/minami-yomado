@@ -116,7 +116,7 @@ fi
 # Keep the original CLI LaunchServices baseline; the optional terminal
 # diagnostic separately measures an active native app's launch handoff.
 # No preexisting Yomado instance was allowed, so this PID belongs to this run.
-/usr/bin/open -n "$ym_qa_app"
+/usr/bin/open -n --stdout "$ym_qa_evidence/product.stdout" --stderr "$ym_qa_evidence/product.stderr" "$ym_qa_app"
 for ym_qa_attempt in {1..100}; do
   if ym_qa_yomado_pid="$("$ym_qa_helpers/observe" pid dev.chekusu.yomado 2>/dev/null)"; then break; fi
   sleep 0.1

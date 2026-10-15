@@ -40,6 +40,18 @@ def call(*args):
     result = run([helper, *args])
     return json.loads(result.stdout)
 
+def parse_close_receipt(stdout, expected_pid):
+    # osascript prints its last returned AX element before the shell helper's
+    # final JSON receipt. Keep that raw output separately; parse only the
+    # explicit final receipt and verify its ownership/action contract.
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError('close helper did not return a receipt')
+    receipt = json.loads(lines[-1])
+    if not isinstance(receipt, dict) or receipt.get('pid') != expected_pid or receipt.get('action') != 'close':
+        raise ValueError('close helper returned a mismatched receipt')
+    return receipt
+
 def wait_for(description, callback, seconds=15):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -133,6 +145,13 @@ def assert_sample(record, initial, baseline, virtual):
     assert record['fixtureWindow']['onscreen'], 'fixture ceased to render onscreen'
     assert contains(virtual['bounds'], record['fixtureWindow']['bounds'])
 
+def assert_regular_panel(record, initial):
+    assert record['productPID'] == initial['productPID'], 'product process changed'
+    assert record['activationPolicy'] == 0, 'product has not returned to Regular'
+    panels = [w for w in record['productWindows'] if w.get('title') == 'yomado' and w.get('onscreen')]
+    assert len(panels) == 1, 'expected exactly one visible product control panel'
+    assert panels[0]['id'] == initial['productPanelWindowID'], 'product control panel was recreated'
+
 try:
     # The earlier test phase must finish and release its product instance.
     existing = run([helper, 'pid', 'dev.chekusu.yomado'], check=False)
@@ -140,7 +159,7 @@ try:
     baseline = call('inventory')
     write('baseline-displays.json', baseline)
     check('guest baseline has exactly one main output', sum(d['main'] for d in baseline) == 1)
-    run(['/usr/bin/open', '-n', app])
+    run(['/usr/bin/open', '-n', '--stdout', evidence_dir / 'product.stdout', '--stderr', evidence_dir / 'product.stderr', app])
     def find_product():
         found = run([helper, 'pid', 'dev.chekusu.yomado'], check=False)
         return int(found.stdout.strip()) if found.returncode == 0 else None
@@ -173,6 +192,11 @@ try:
     open_panel()
     wait_for('fixture wholly inside virtual screen', lambda: contains(virtual['bounds'], sample(virtual['id'])['fixtureWindow']['bounds']))
     initial = sample(virtual['id'], 'initial-on-virtual')
+    initial_panels = [w for w in initial['productWindows'] if w.get('title') == 'yomado' and w.get('onscreen')]
+    check('initial product has exactly one visible control panel', len(initial_panels) == 1)
+    initial['productPanelWindowID'] = initial_panels[0]['id']
+    write('initial-on-virtual.json', initial)
+    assert_regular_panel(initial, initial)
     assert_sample(initial, initial, baseline, virtual)
     check('initial actual pixels are nonuniform', initial['image']['distinctBytes'] > 8)
     write('owned-processes.json', {'productPID': product_pid, 'fixturePID': fixture_process.pid,
@@ -181,7 +205,10 @@ try:
     monitor_thread.start()
     intervals = []
     for cycle in range(1, 4):
-        actions.append(json.loads(run(['/bin/bash', source_dir / 'close-owned-panel.sh', helper_dir, product_pid]).stdout))
+        close_result = run(['/bin/bash', source_dir / 'close-owned-panel.sh', helper_dir, product_pid])
+        (evidence_dir / f'cycle-{cycle}-close.stdout').write_text(close_result.stdout)
+        (evidence_dir / f'cycle-{cycle}-close.stderr').write_text(close_result.stderr)
+        actions.append(parse_close_receipt(close_result.stdout, product_pid))
         write(f'cycle-{cycle}-closed-panel.json', wait_policy(1, False))
         before = sample(virtual['id'], f'cycle-{cycle}-accessory-before')
         time.sleep(3)
@@ -196,6 +223,8 @@ try:
         write(f'cycle-{cycle}-reopened-panel.json', reopened)
         final = sample(virtual['id'], f'cycle-{cycle}-regular-after')
         assert_sample(final, initial, baseline, virtual)
+        assert_regular_panel(final, initial)
+        check(f'cycle {cycle}: same product panel remains visible', True, initial['productPanelWindowID'])
         check(f'cycle {cycle}: actual status-menu reopened Regular panel', final['activationPolicy'] == 0)
         intervals.append({'cycle': cycle, 'accessoryStart': before['uptime'], 'accessoryEnd': after['uptime'],
                           'counterDelta': after['fixtureState']['counter'] - before['fixtureState']['counter']})
@@ -214,6 +243,8 @@ try:
     write('rename-cancelled.json', wait_for('rename sheet dismissed', no_sheet))
     cancelled = sample(virtual['id'], 'after-rename-cancel')
     assert_sample(cancelled, initial, baseline, virtual)
+    assert_regular_panel(cancelled, initial)
+    check('rename cancellation preserves the same visible product panel', True, initial['productPanelWindowID'])
     check('rename cancelled without display/window changes', cancelled['activationPolicy'] == 0)
     monitor_stop.set(); monitor_thread.join(timeout=25)
     check('continuity observer completed', not monitor_thread.is_alive())

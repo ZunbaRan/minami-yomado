@@ -7,6 +7,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 checks = []
 interval_summary = []
+cold_start_focus = {}
 
 def check(name, condition):
     checks.append({"name": name, "passed": bool(condition)})
@@ -23,6 +24,12 @@ def windows(a, title="yomado"):
 
 def visible(a, title="yomado"):
     return [w for w in windows(a, title) if w.get("kCGWindowIsOnscreen") is True]
+
+def panel_ax_windows(product):
+    # Observe.swift records these attributes on each top-level AX window.
+    # A focused child control or a different app window is not panel focus.
+    return [w for w in product.get("axWindows", [])
+            if w.get("AXRole") == "AXWindow" and w.get("AXTitle") == "yomado"]
 
 def tree_matches(value, predicate):
     if isinstance(value, dict):
@@ -41,6 +48,10 @@ def dock_reliable(data, expected):
 
 try:
     initial = app(read("02-yomado-first-open.json"))
+    cold_start_focus = {"applicationActive": initial.get("active"),
+                        "panelAXWindows": [{k: w.get(k) for k in ["AXMain", "AXFocused"]}
+                                           for w in panel_ax_windows(initial)],
+                        "boundary": "Cold-start focus recorded separately; this change validates explicit reopening, not the pre-existing cold-start focus limitation."}
     expected_pid = initial.get("pid")
     expected_windows = [w.get("kCGWindowNumber") for w in windows(initial)]
     check("one original panel identity captured", isinstance(expected_pid, int) and expected_pid > 0 and len(expected_windows) == 1)
@@ -67,6 +78,13 @@ try:
             check(label + ": same visible normal-size panel", len(visible(product)) == 1 and
                   visible(product)[0].get("kCGWindowBounds", {}).get("Width", 0) >= 600 and
                   [w.get("kCGWindowNumber") for w in windows(product)] == expected_windows)
+            if label != "02-yomado-first-open":
+                panels = panel_ax_windows(product)
+                check(label + ": reopened application is active", product.get("active") is True)
+                check(label + ": exact reopened panel is AXMain",
+                      len(panels) == 1 and panels[0].get("AXMain") is True)
+                check(label + ": exact reopened panel is AXFocused",
+                      len(panels) == 1 and panels[0].get("AXFocused") is True)
         else:
             check(label + ": panel hidden", len(visible(product)) == 0)
         check(label + ": reliable Dock presence matches lifecycle",
@@ -148,6 +166,7 @@ except Exception as error:
 
 result = {"checks": checks, "passed": sum(c["passed"] for c in checks), "failed": sum(not c["passed"] for c in checks),
           "stableIntervals": interval_summary,
+          "coldStartFocusObservation": cold_start_focus,
           "activationPolicyBoundary": "same PID/window; Regular while open and Accessory while closed; sampled quiet intervals required; transition samples retained without pretending fixed 0.1-second observation coverage",
           "acceptanceVerdict": "requires independent screenshots and real Space/group behavior review; structural checks alone do not prove visual grouping"}
 print(json.dumps(result, indent=2))

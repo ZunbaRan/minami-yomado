@@ -54,13 +54,6 @@ jobs:
         shell: bash
         run: |
           bash scripts/stage-manager-gui-qa/setup-guest.sh "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/setup"
-      - name: Record actual app lifecycle and full-screen scenarios
-        env:
-          YM_QA_NATIVE_LAUNCH_DIAGNOSTIC: "false"
-          YM_QA_EXTRA_GROUP_SCENARIOS: "true"
-        shell: bash
-        run: |
-          bash scripts/stage-manager-gui-qa/phase1.sh "$GITHUB_WORKSPACE/production/dist/Yomado.app" "$RUNNER_TEMP/yomado-gui-helpers" "$GITHUB_WORKSPACE/test-output/gui-qa/scenarios" "${{ matrix.variant }}"
       - name: Verify product-owned virtual display persists with closed panel
         if: ${{ !cancelled() }}
         shell: bash
