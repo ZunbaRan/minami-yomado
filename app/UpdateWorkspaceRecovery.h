@@ -15,8 +15,11 @@ FOUNDATION_EXPORT YMUpdateOwnedWindowRelation YMUpdateWindowRelationToOwnedDispl
 /// Pure, conservative classification of a system menu surface or its hidden
 /// backing copies. Evidence is collected afresh by the native backend, never
 /// persisted. Ordinary AX windows always take precedence over this exclusion.
+/// Other menu regions include their current display bounds, inset and system
+/// surface; an AX menu frame must match one of these independently checked regions.
 FOUNDATION_EXPORT BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
-    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary * _Nullable ownerAX);
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary * _Nullable ownerAX,
+    NSArray<NSDictionary *> * _Nullable currentMenuRegions);
 /// Exact native identity/lookup helpers used only for in-memory workspace
 /// checkpoint handoff. No titles, paths, permissions prompts or activation.
 FOUNDATION_EXPORT NSDictionary * _Nullable YMUpdateIdentityForWindowElement(id element);

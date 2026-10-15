@@ -114,21 +114,27 @@ static BOOL UWindowSafe(id element) {
     return UFrame(element) && AXUIElementIsAttributeSettable((__bridge AXUIElementRef)element,
         kAXPositionAttribute, &settable) == kAXErrorSuccess && settable;
 }
-BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
-    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary *ownerAX) {
-    if (![candidate isKindOfClass:NSDictionary.class] || ![systemMenu isKindOfClass:NSDictionary.class] ||
-        !YMWorkspaceGeometry(displayBounds) || !YMWorkspaceGeometry(candidate[@"frame"]) ||
+static BOOL USystemMenuMatchesDisplay(NSDictionary *systemMenu, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel) {
+    if (![systemMenu isKindOfClass:NSDictionary.class] || !YMWorkspaceGeometry(displayBounds) ||
         !YMWorkspaceGeometry(systemMenu[@"frame"]) || !isfinite(topInset) || topInset <= 1 ||
         topInset >= [displayBounds[@"height"] doubleValue] / 4 || mainMenuLevel <= 0 ||
         ![systemMenu[@"trustedWindowServer"] isEqual:@YES] || ![systemMenu[@"onscreen"] isEqual:@YES] ||
         ![systemMenu[@"layer"] isEqual:@(mainMenuLevel)] ||
-        !UInteger(systemMenu[@"pid"],1,INT_MAX) || !UInteger(systemMenu[@"windowID"],1,UINT32_MAX) ||
-        !UInteger(candidate[@"pid"],1,INT_MAX) || !UInteger(candidate[@"windowID"],1,UINT32_MAX)) return NO;
+        !UInteger(systemMenu[@"pid"],1,INT_MAX) || !UInteger(systemMenu[@"windowID"],1,UINT32_MAX)) return NO;
     NSDictionary *band=@{@"x":displayBounds[@"x"],@"y":displayBounds[@"y"],
         @"width":displayBounds[@"width"],@"height":@(topInset)};
     // AppKit reserves an additional edge pixel on some systems (31 vs 30).
     // Use the actual full-width system surface, with only rounding tolerance.
-    if (!USameFrame(systemMenu[@"frame"],band) || !USameFrame(candidate[@"frame"],systemMenu[@"frame"])) return NO;
+    return USameFrame(systemMenu[@"frame"],band);
+}
+BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary *ownerAX,
+    NSArray<NSDictionary *> *currentMenuRegions) {
+    if (![candidate isKindOfClass:NSDictionary.class] || !YMWorkspaceGeometry(candidate[@"frame"]) ||
+        !UInteger(candidate[@"pid"],1,INT_MAX) || !UInteger(candidate[@"windowID"],1,UINT32_MAX) ||
+        !USystemMenuMatchesDisplay(systemMenu,displayBounds,topInset,mainMenuLevel) ||
+        !USameFrame(candidate[@"frame"],systemMenu[@"frame"])) return NO;
     if ([candidate[@"pid"] isEqual:systemMenu[@"pid"]] &&
         [candidate[@"windowID"] isEqual:systemMenu[@"windowID"]])
         return [candidate[@"onscreen"] isEqual:@YES] && [candidate[@"layer"] isEqual:@(mainMenuLevel)];
@@ -136,9 +142,21 @@ BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *display
         ![ownerAX isKindOfClass:NSDictionary.class] || ![ownerAX[@"pid"] isEqual:candidate[@"pid"]] ||
         ![ownerAX[@"menuRole"] isEqual:(__bridge NSString *)kAXMenuBarRole] ||
         ![ownerAX[@"windows"] isKindOfClass:NSArray.class]) return NO;
-    // AXMenuBar is not an AXWindow and may have no CG ID or geometry. If it
-    // does expose a frame, it must corroborate this display's menu surface.
-    if (ownerAX[@"menuFrame"] && !USameFrame(ownerAX[@"menuFrame"],systemMenu[@"frame"])) return NO;
+    // AXMenuBar can describe the primary menu while its backing copies occupy
+    // other screens. Exposed geometry must still match a current system menu;
+    // the candidate above must match the menu on its own display.
+    if (ownerAX[@"menuFrame"] && !USameFrame(ownerAX[@"menuFrame"],systemMenu[@"frame"])) {
+        if (![currentMenuRegions isKindOfClass:NSArray.class]) return NO;
+        BOOL corroborated=NO;
+        for (id region in currentMenuRegions) {
+            if (![region isKindOfClass:NSDictionary.class] ||
+                ![region[@"topInset"] isKindOfClass:NSNumber.class] ||
+                !USystemMenuMatchesDisplay(region[@"surface"],region[@"bounds"],
+                    [region[@"topInset"] doubleValue],mainMenuLevel)) continue;
+            if (USameFrame(ownerAX[@"menuFrame"],region[@"surface"][@"frame"])) { corroborated=YES; break; }
+        }
+        if (!corroborated) return NO;
+    }
     for (id window in ownerAX[@"windows"]) {
         if (![window isKindOfClass:NSDictionary.class]) return NO;
         if ([ownerAX[@"bundleID"] isEqual:@"com.apple.finder"] &&
@@ -177,12 +195,12 @@ static BOOL UIsSystemWindowServer(pid_t pid) {
     return proc_pidpath(pid,path,sizeof(path))>0 &&
         strcmp(path,"/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/Resources/WindowServer")==0;
 }
-static NSDictionary *UMenuScreenInsets(NSArray *owned) {
+static NSDictionary *UMenuScreenInsets(NSArray *displays) {
     NSMutableDictionary *result=[NSMutableDictionary dictionary];
     double primaryHeight=CGDisplayBounds(CGMainDisplayID()).size.height;
     for (NSScreen *screen in NSScreen.screens) {
         NSNumber *ID=screen.deviceDescription[@"NSScreenNumber"];
-        for (NSDictionary *display in owned) {
+        for (NSDictionary *display in displays) {
             if (![display[@"displayID"] isEqual:ID]) continue;
             NSRect frame=screen.frame, visible=screen.visibleFrame;
             NSDictionary *converted=@{@"x":@(frame.origin.x),@"y":@(primaryHeight-NSMaxY(frame)),
@@ -297,9 +315,10 @@ static NSArray *UDisplays(NSError **error) {
     if (!owned.count) return @{@"displays":displays, @"windows":@[]};
     NSArray *raw = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, 0));
     if (!raw) { UFail(error, 12, @"The complete window inventory is unavailable."); return nil; }
-    NSDictionary *menuInsets=UMenuScreenInsets(owned);
+    NSDictionary *menuInsets=UMenuScreenInsets(displays);
     NSInteger menuLevel=CGWindowLevelForKey(kCGMainMenuWindowLevelKey);
     NSMutableDictionary<NSNumber *,NSMutableArray *> *systemMenus=[NSMutableDictionary dictionary];
+    NSMutableArray<NSDictionary *> *currentMenuRegions=[NSMutableArray array];
     NSMutableDictionary<NSNumber *,id> *menuOwners=[NSMutableDictionary dictionary];
     for (NSDictionary *entry in raw) {
         if ([entry[(__bridge NSString *)kCGWindowLayer] integerValue]!=menuLevel ||
@@ -307,11 +326,12 @@ static NSArray *UDisplays(NSError **error) {
             !UIsSystemWindowServer([entry[(__bridge NSString *)kCGWindowOwnerPID] intValue])) continue;
         NSMutableDictionary *menu=[UCGWindowMetadata(entry) mutableCopy]; if (!menu) continue;
         menu[@"trustedWindowServer"]=@YES;
-        for (NSDictionary *display in owned) {
+        for (NSDictionary *display in displays) {
             NSNumber *ID=display[@"displayID"];
-            if (!YMUpdateIsVerifiedMenuChrome(menu,display[@"bounds"],[menuInsets[ID] doubleValue],menuLevel,menu,nil)) continue;
+            if (!USystemMenuMatchesDisplay(menu,display[@"bounds"],[menuInsets[ID] doubleValue],menuLevel)) continue;
             if (!systemMenus[ID]) systemMenus[ID]=[NSMutableArray array];
             [systemMenus[ID] addObject:menu.copy];
+            [currentMenuRegions addObject:@{@"surface":menu.copy,@"bounds":display[@"bounds"],@"topInset":menuInsets[ID]}];
         }
     }
     NSMutableArray *windows = [NSMutableArray array];
@@ -347,7 +367,7 @@ static NSArray *UDisplays(NSError **error) {
                 if ([menuOwners[PID] isKindOfClass:NSDictionary.class]) ownerAX=menuOwners[PID];
             }
             if (YMUpdateIsVerifiedMenuChrome(candidate,owner[@"bounds"],
-                [menuInsets[owner[@"displayID"]] doubleValue],menuLevel,menu,ownerAX)) { menuChrome=YES; break; }
+                [menuInsets[owner[@"displayID"]] doubleValue],menuLevel,menu,ownerAX,currentMenuRegions)) { menuChrome=YES; break; }
         }
         if (menuChrome) continue;
         if (!bundle || [entry[(__bridge NSString *)kCGWindowLayer] integerValue] != 0 ||
