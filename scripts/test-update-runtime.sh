@@ -34,17 +34,62 @@ ym_ca_name="yomado CI Update Test ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 ym_server_pid=""
 ym_fixture_pid=""
 ym_window_pids=""
+ym_stop_server() {
+  [ -n "$ym_server_pid" ] || return 0
+  python3 - "$ym_server_pid" <<'PYSTOP'
+import os,signal,subprocess,sys,time
+pid=int(sys.argv[1])
+def alive():
+    try:
+        r=subprocess.run(['ps','-p',str(pid),'-o','stat='],capture_output=True,text=True,timeout=2)
+        return r.returncode==0 and r.stdout.strip() and not r.stdout.strip().startswith('Z')
+    except subprocess.TimeoutExpired:return True
+try:os.kill(pid,signal.SIGTERM)
+except ProcessLookupError:pass
+deadline=time.monotonic()+3
+while time.monotonic()<deadline and alive():time.sleep(.1)
+if alive():
+    try:os.kill(pid,signal.SIGKILL)
+    except ProcessLookupError:pass
+print('[update-runtime] server stop requested for PID '+str(pid),flush=True)
+PYSTOP
+  ym_server_pid=""
+}
+ym_bounded_guest_command() {
+  python3 - "$ym_evidence/guest-cleanup.jsonl" "$@" <<'PYBOUND'
+import json,os,signal,subprocess,sys,time
+from pathlib import Path
+path,label,seconds,*command=sys.argv[1:];started=time.monotonic();result={'label':label,'timedOut':False}
+process=None
+try:
+    process=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    try:result['returnCode']=process.wait(timeout=float(seconds))
+    except subprocess.TimeoutExpired:
+        result['timedOut']=True
+        # Only the process group created immediately above is targeted. sudo
+        # children may run as root, so kill that disposable guest group as root.
+        try:subprocess.run(['sudo','-n','/bin/kill','-KILL','--','-'+str(process.pid)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+        except (subprocess.TimeoutExpired,OSError):pass
+        try:result['returnCode']=process.wait(timeout=2)
+        except subprocess.TimeoutExpired:result['returnCode']=None
+except OSError as error:result['errorType']=type(error).__name__
+result['elapsed']=round(time.monotonic()-started,2)
+with Path(path).open('a') as f:f.write(json.dumps(result)+'\n')
+print('[update-runtime] guest command '+json.dumps(result),flush=True)
+sys.exit(0 if result.get('returnCode')==0 and not result['timedOut'] else 1)
+PYBOUND
+}
 ym_cleanup() {
+  # Remove test executables before any potentially slow guest system cleanup.
+  rm -f "$ym_evidence/UpdateRuntimeFixture" "$ym_evidence/UpdateRuntimeWindow"
   if [ -n "$ym_fixture_pid" ]; then kill "$ym_fixture_pid" 2>/dev/null || true; fi
   for ym_pid in $ym_window_pids; do kill "$ym_pid" 2>/dev/null || true; done
-  if [ -n "$ym_server_pid" ]; then kill "$ym_server_pid" 2>/dev/null || true; fi
+  ym_stop_server || true
   if [ -f "$ym_temporary/ca.crt" ]; then
-    sudo security remove-trusted-cert -d "$ym_temporary/ca.crt" >/dev/null 2>&1 || true
-    sudo security delete-certificate -c "$ym_ca_name" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+    ym_bounded_guest_command remove-test-trust 10 sudo -n security remove-trusted-cert -d "$ym_temporary/ca.crt" || true
+    ym_bounded_guest_command remove-test-certificate 10 sudo -n security delete-certificate -c "$ym_ca_name" /Library/Keychains/System.keychain || true
   fi
   rm -rf "$ym_temporary"
-  # Application bundles and executable fixtures are not review artifacts.
-  rm -f "$ym_evidence/UpdateRuntimeFixture" "$ym_evidence/UpdateRuntimeWindow"
 }
 trap ym_cleanup EXIT
 umask 077
@@ -64,7 +109,7 @@ openssl x509 -req -days 1 -sha256 -in "$ym_temporary/server.csr" \
   -CA "$ym_temporary/ca.crt" -CAkey "$ym_temporary/ca.key" -CAcreateserial \
   -extfile "$ym_temporary/server.ext" -out "$ym_temporary/server.crt" \
   >> "$ym_evidence/certificate-setup.log" 2>&1
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$ym_temporary/ca.crt"
+ym_bounded_guest_command add-test-trust 30 sudo -n security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$ym_temporary/ca.crt"
 
 cat > "$ym_temporary/key.swift" <<'SWIFT'
 import Foundation
@@ -78,8 +123,12 @@ chmod 600 "$ym_temporary/seed"
 ym_public="$(cat "$ym_temporary/public")"
 
 cat > "$ym_temporary/serve.py" <<'PY'
-import http.server, ssl, sys, time
+import sys,time,os,faulthandler
+faulthandler.enable();faulthandler.dump_traceback_later(10,repeat=False)
+print('server-process-started',os.getpid(),flush=True)
+import http.server,ssl
 from pathlib import Path
+print('server-imports-complete',flush=True)
 class Handler(http.server.SimpleHTTPRequestHandler):
     def copyfile(self, source, output):
         try:
@@ -88,11 +137,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 output.flush()
                 if self.path.endswith('.zip'): time.sleep(0.01)
         except (BrokenPipeError, ConnectionResetError): pass
+print('server-bind-start',flush=True)
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+print('server-bind-complete',flush=True)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[1], sys.argv[2])
 server.socket = context.wrap_socket(server.socket, server_side=True)
 Path(sys.argv[3]).write_text(str(server.server_port))
+faulthandler.cancel_dump_traceback_later()
+print('server-ready',flush=True)
 server.serve_forever()
 PY
 
@@ -105,20 +158,47 @@ ym_sign_bundle() {
   done
   codesign --verify --deep --strict "$ym_app"
 }
+mkdir -p "$ym_temporary/served"
+  (
+    cd "$ym_temporary/served"
+    exec python3 -u "$ym_temporary/serve.py" "$ym_temporary/server.crt" "$ym_temporary/server.key" "$ym_temporary/port"
+  ) > "$ym_evidence/server.log" 2>&1 &
+  ym_server_pid=$!
+  if ! ym_port="$(python3 - "$ym_temporary/port" "$ym_server_pid" "$ym_evidence/server-readiness.json" <<'PYREADY'
+from pathlib import Path
+import json,subprocess,sys,time
+path,pid,out=Path(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]);started=time.monotonic();deadline=started+30
+port=None;reason='timeout';observations=[]
+while time.monotonic()<deadline:
+    try:
+        process=subprocess.run(['ps','-p',str(pid),'-o','stat='],capture_output=True,text=True,timeout=2)
+        state=process.stdout.strip();alive=process.returncode==0 and bool(state) and not state.startswith('Z')
+    except subprocess.TimeoutExpired:state='ps-timeout';alive=True
+    observations.append({'elapsed':round(time.monotonic()-started,2),'pid':pid,'state':state,'alive':alive})
+    if path.exists():
+        try:candidate=int(path.read_text().strip())
+        except ValueError:candidate=0
+        if alive and 0<candidate<65536:port=candidate;reason='ready';break
+    if not alive:reason='server-exited';break
+    time.sleep(.2)
+out.write_text(json.dumps({'reason':reason,'port':port,'observations':observations},indent=2)+'\n')
+print('[update-runtime] server readiness '+json.dumps({'reason':reason,'elapsed':round(time.monotonic()-started,2),'pid':pid,'state':state}),file=sys.stderr,flush=True)
+if port:print(port)
+sys.exit(0 if port else 1)
+PYREADY
+)"; then
+    printf '[update-runtime] shared server failed readiness; inspect server.log and server-readiness.json\n' >&2
+    exit 1
+  fi
+
 ym_result=0
-for ym_case in update tampered-feed tampered-archive cancel gate-veto offline automatic occupied; do
+for ym_case in update tampered-feed tampered-archive cancel gate-veto automatic occupied offline; do
   printf '[update-runtime] %s prepare\n' "$ym_case"
   ym_case_evidence="$ym_evidence/$ym_case"
   ym_case_root="$ym_temporary/$ym_case"
-  mkdir -p "$ym_case_evidence" "$ym_case_root/server" "$ym_case_root/install"
-  (
-    cd "$ym_case_root/server"
-    exec python3 "$ym_temporary/serve.py" "$ym_temporary/server.crt" "$ym_temporary/server.key" "$ym_case_root/port"
-  ) > "$ym_case_evidence/server.log" 2>&1 &
-  ym_server_pid=$!
-  for ym_wait in $(seq 1 50); do [ -s "$ym_case_root/port" ] && break; sleep .1; done
-  ym_port="$(cat "$ym_case_root/port")"
-  ym_feed="https://localhost:$ym_port/appcast.xml"
+  ym_case_public="$ym_temporary/served/$ym_case"
+  mkdir -p "$ym_case_evidence" "$ym_case_public" "$ym_case_root/install"
+  ym_feed="https://localhost:$ym_port/$ym_case/appcast.xml"
   ym_work_pid=0
   ym_probe_pid=0
   if [ "$ym_case" = occupied ]; then
@@ -162,39 +242,39 @@ with open(p,'wb') as f:plistlib.dump(info,f)
 PY
     ym_sign_bundle "$ym_app" >> "$ym_case_evidence/signatures.log" 2>&1
   done
-  ditto -c -k --norsrc --noextattr --keepParent "$ym_case_root/build-2/YomadoUpdateFixture.app" "$ym_case_root/server/update.zip"
-  ym_signature="$("$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" -p "$ym_case_root/server/update.zip")"
-  python3 - "$ym_case_root/server" "$ym_port" "$ym_signature" <<'PY'
+  ditto -c -k --norsrc --noextattr --keepParent "$ym_case_root/build-2/YomadoUpdateFixture.app" "$ym_case_public/update.zip"
+  ym_signature="$("$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" -p "$ym_case_public/update.zip")"
+  python3 - "$ym_case_public" "$ym_port" "$ym_signature" "$ym_case" <<'PY'
 from pathlib import Path
 import sys,xml.etree.ElementTree as E
-d,port,signature=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
+d,port,signature,case=Path(sys.argv[1]),sys.argv[2],sys.argv[3],sys.argv[4]
 ns='http://www.andymatuschak.org/xml-namespaces/sparkle';E.register_namespace('sparkle',ns)
 rss=E.Element('rss',{'version':'2.0'});c=E.SubElement(rss,'channel');E.SubElement(c,'title').text='Isolated update fixture'
-E.SubElement(c,'link').text='https://localhost:'+port+'/';E.SubElement(c,'description').text='Disposable guest only'
+E.SubElement(c,'link').text='https://localhost:'+port+'/'+case+'/';E.SubElement(c,'description').text='Disposable guest only'
 i=E.SubElement(c,'item');E.SubElement(i,'title').text='Fixture 1.1';E.SubElement(i,'{'+ns+'}version').text='2'
 E.SubElement(i,'{'+ns+'}shortVersionString').text='1.1';E.SubElement(i,'{'+ns+'}minimumSystemVersion').text='14.0'
-E.SubElement(i,'enclosure',{'url':'https://localhost:'+port+'/update.zip','type':'application/octet-stream',
+E.SubElement(i,'enclosure',{'url':'https://localhost:'+port+'/'+case+'/update.zip','type':'application/octet-stream',
   'length':str((d/'update.zip').stat().st_size),'{'+ns+'}edSignature':signature})
 E.ElementTree(rss).write(d/'appcast.xml',encoding='utf-8',xml_declaration=True)
 PY
-  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" "$ym_case_root/server/appcast.xml" > "$ym_case_evidence/feed-sign.log"
-  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" --verify "$ym_case_root/server/appcast.xml" >> "$ym_case_evidence/feed-sign.log"
-  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" --verify "$ym_case_root/server/update.zip" "$ym_signature" >> "$ym_case_evidence/feed-sign.log"
+  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" "$ym_case_public/appcast.xml" > "$ym_case_evidence/feed-sign.log"
+  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" --verify "$ym_case_public/appcast.xml" >> "$ym_case_evidence/feed-sign.log"
+  "$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" --verify "$ym_case_public/update.zip" "$ym_signature" >> "$ym_case_evidence/feed-sign.log"
   if [ "$ym_case" = tampered-feed ]; then
-    python3 - "$ym_case_root/server/appcast.xml" <<'PY'
+    python3 - "$ym_case_public/appcast.xml" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]);p.write_bytes(p.read_bytes().replace(b'Isolated update fixture',b'Altered update fixture'))
 PY
   elif [ "$ym_case" = tampered-archive ]; then
-    python3 - "$ym_case_root/server/update.zip" <<'PY'
+    python3 - "$ym_case_public/update.zip" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]);data=bytearray(p.read_bytes());data[len(data)//2]^=1;p.write_bytes(data)
 PY
   fi
   ditto --norsrc --noextattr "$ym_case_root/build-1/YomadoUpdateFixture.app" "$ym_case_root/install/YomadoUpdateFixture.app"
-  if [ "$ym_case" = offline ]; then kill "$ym_server_pid"; wait "$ym_server_pid" 2>/dev/null || true; ym_server_pid=""; fi
+  if [ "$ym_case" = offline ]; then ym_stop_server; fi
   printf '[update-runtime] %s launch\n' "$ym_case"
   "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" > "$ym_case_evidence/app.stdout" 2> "$ym_case_evidence/app.stderr" &
   ym_fixture_pid=$!
@@ -270,6 +350,13 @@ for pid in {r['pid'] for r in records if r['event']=='launched'}:
 PY
   ym_fixture_pid=""
   sleep 5
+  python3 - "$ym_evidence/server.log" "$ym_case_evidence/server.log" "$ym_case" <<'PYCASELOG'
+from pathlib import Path
+import sys
+source,target,case=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
+lines=source.read_text().splitlines() if source.exists() else []
+target.write_text('\n'.join(line for line in lines if ' /'+case+'/' in line)+'\n')
+PYCASELOG
   if ! python3 - "$ym_case_evidence" "$ym_case_root/install/YomadoUpdateFixture.app" "$ym_case" <<'PY'
 import json,plistlib,subprocess,sys
 from pathlib import Path
@@ -283,7 +370,7 @@ if case in ('update','automatic','occupied'):
     checks.update({'installed-build2':build=='2','new-process':len(new)==1 and old and new[0]['pid']!=old[0]['pid'],
       'workspace-prepared':any(r['event']=='workspace-prepared' and r['ready'] for r in events),
       'termination-committed':any(r['event']=='termination-gate' and r['committed'] for r in events),
-      'recovered-after-install':any(r['event']=='updated-and-recovered' and r.get('journalConsumed') for r in events),'archive-requested':'GET /update.zip HTTP' in log,
+      'recovered-after-install':any(r['event']=='updated-and-recovered' and r.get('journalConsumed') for r in events),'archive-requested':('GET /'+case+'/update.zip HTTP') in log,
       'no-updater-errors':not errors,
       'installed-signature-valid':subprocess.run(['codesign','--verify','--deep','--strict',str(app)],capture_output=True).returncode==0})
     if case=='automatic':
@@ -317,10 +404,10 @@ else:
       'never-authorized-install':not any(r.get('authorized') for r in events),'no-termination-commit':'termination-gate' not in seen})
     if case=='cancel':checks['cancelled-after-data']=('cancel-requested' in seen and any(r['event']=='updater-state' and r.get('status')==2 and r.get('progress',-1)>0 for r in events))
     elif case=='gate-veto':checks['explicit-veto']=('gate-veto' in seen and any(r['domain']=='fixture.workspace-busy' for r in errors))
-    elif case=='offline':checks['network-error-observed']=bool(errors) and not log.strip()
+    elif case=='offline':checks['network-error-observed']=bool(errors) and 'GET /' not in log
     else:
         checks['signature-rejection']=any(e['domain']=='SUSparkleErrorDomain' and e['code'] in (3001,3002) for r in errors for e in r.get('chain',[]))
-        checks['archive-fetch-boundary']=('GET /update.zip HTTP' in log) == (case=='tampered-archive')
+        checks['archive-fetch-boundary']=(('GET /'+case+'/update.zip HTTP') in log) == (case=='tampered-archive')
 report={'scenario':case,'checks':checks,'passed':all(checks.values()),'installedBuild':build,
         'scope':'Real updater with native recovery and one surviving window plus untouched physical probe.' if case=='occupied' else 'Real updater and native zero-owned-display journal. Ad hoc fixture signatures; not Developer ID/notarized acceptance.'}
 (d/'result.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report));sys.exit(0 if report['passed'] else 1)
@@ -328,6 +415,5 @@ PY
   then ym_result=1; fi
   for ym_pid in $ym_window_pids; do kill "$ym_pid" 2>/dev/null || true; done
   ym_window_pids=""
-  if [ -n "$ym_server_pid" ]; then kill "$ym_server_pid"; wait "$ym_server_pid" 2>/dev/null || true; ym_server_pid=""; fi
 done
 exit "$ym_result"
