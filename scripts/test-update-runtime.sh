@@ -95,6 +95,12 @@ ym_cleanup() {
     ym_bounded_guest_command remove-test-trust 10 sudo -n security remove-trusted-cert -d "$ym_temporary/ca.crt" || true
     ym_bounded_guest_command remove-test-certificate 10 sudo -n security delete-certificate -c "$ym_ca_name" /Library/Keychains/System.keychain || true
   fi
+  if [ -f "$ym_temporary/codesign/codesign.crt" ]; then
+    ym_bounded_guest_command remove-fixture-code-trust 10 security remove-trusted-cert "$ym_temporary/codesign/codesign.crt" || true
+  fi
+  if [ -f "$ym_temporary/codesign/identity.keychain-db" ]; then
+    ym_bounded_guest_command remove-fixture-keychain 10 security delete-keychain "$ym_temporary/codesign/identity.keychain-db" || true
+  fi
   rm -rf "$ym_temporary"
 }
 trap ym_cleanup EXIT
@@ -116,6 +122,7 @@ openssl x509 -req -days 1 -sha256 -in "$ym_temporary/server.csr" \
   -extfile "$ym_temporary/server.ext" -out "$ym_temporary/server.crt" \
   >> "$ym_evidence/certificate-setup.log" 2>&1
 ym_bounded_guest_command add-test-trust 30 sudo -n security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$ym_temporary/ca.crt"
+python3 "$ym_root/scripts/update-runtime-guest-permissions.py" setup "$ym_temporary/codesign"
 
 cat > "$ym_temporary/key.swift" <<'SWIFT'
 import Foundation
@@ -163,13 +170,7 @@ server.serve_forever()
 PY
 
 ym_sign_bundle() {
-  local ym_app="$1" ym_framework="$1/Contents/Frameworks/Sparkle.framework"
-  for ym_code in "$ym_framework/Versions/B/XPCServices/Installer.xpc" \
-      "$ym_framework/Versions/B/XPCServices/Downloader.xpc" \
-      "$ym_framework/Versions/B/Autoupdate" "$ym_framework/Versions/B/Updater.app" "$ym_framework" "$ym_app"; do
-    codesign --force --sign - "$ym_code"
-  done
-  codesign --verify --deep --strict "$ym_app"
+  python3 "$ym_root/scripts/update-runtime-guest-permissions.py" sign "$ym_temporary/codesign" "$1"
 }
 mkdir -p "$ym_temporary/served"
   (
@@ -255,6 +256,11 @@ with open(p,'wb') as f:plistlib.dump(info,f)
 PY
     ym_sign_bundle "$ym_app" >> "$ym_case_evidence/signatures.log" 2>&1
   done
+  if [ "$ym_case" = occupied ]; then
+    python3 "$ym_root/scripts/update-runtime-guest-permissions.py" grant "$ym_temporary/codesign" \
+      "$ym_case_root/build-1/YomadoUpdateFixture.app" "$ym_case_root/build-2/YomadoUpdateFixture.app" \
+      "$ym_case_evidence/guest-permission-setup.json"
+  fi
   ditto -c -k --norsrc --noextattr --keepParent "$ym_case_root/build-2/YomadoUpdateFixture.app" "$ym_case_public/update.zip"
   ym_signature="$("$ym_sparkle/bin/sign_update" --ed-key-file "$ym_temporary/seed" -p "$ym_case_public/update.zip")"
   python3 - "$ym_case_public" "$ym_port" "$ym_signature" "$ym_case" <<'PY'
@@ -407,6 +413,8 @@ if case in ('update','automatic','occupied'):
         ready=[r for r in events if r['event']=='occupied-ready']
         verified=[r for r in events if r['event']=='occupied-verified']
         checks['occupied-prepared-once']=len(ready)==1 and len(ready[0]['profiles'])==1
+        recreated=[r for r in events if r['event']=='occupied-recreate']
+        checks['updated-process-retains-AX']=len(recreated)==1 and recreated[0].get('accessibilityTrusted') is True
         checks['occupied-verified-once']=len(verified)==1 and verified[0]['matches']
         if ready and verified:
             baseline=ready[0]; after=verified[0]
@@ -436,7 +444,7 @@ else:
         checks['signature-rejection']=any(e['domain']=='SUSparkleErrorDomain' and e['code'] in (3001,3002) for r in errors for e in r.get('chain',[]))
         checks['archive-fetch-boundary']=(('GET /'+case+'/update.zip HTTP') in log) == (case=='tampered-archive')
 report={'scenario':case,'checks':checks,'passed':all(checks.values()),'installedBuild':build,
-        'scope':'Real updater with native recovery and one surviving window plus untouched physical probe.' if case=='occupied' else 'Real updater and native zero-owned-display journal. Ad hoc fixture signatures; not Developer ID/notarized acceptance.'}
+        'scope':'Real updater with native recovery and one surviving window plus untouched physical probe.' if case=='occupied' else 'Real updater and native zero-owned-display journal. Temporary self-signed fixture certificate; not Developer ID/notarized acceptance.'}
 (d/'result.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report));sys.exit(0 if report['passed'] else 1)
 PY
   then ym_result=1; fi

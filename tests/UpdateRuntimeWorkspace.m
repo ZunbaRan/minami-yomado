@@ -273,7 +273,7 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
         ![saved[@"height"] isEqual:@800] || [saved[@"hiDPI"] boolValue] || !saved[@"bounds"]) {
         FFail(&error,6,@"The occupied restart fixture did not receive its exact saved profile."); completion(NO,error); return;
     }
-    self.record(@"occupied-recreate",@{@"savedProfiles":profiles});
+    self.record(@"occupied-recreate",@{@"savedProfiles":profiles,@"accessibilityTrusted":@(AXIsProcessTrusted())});
     [self createWithSavedBounds:saved[@"bounds"] completion:completion];
 }
 - (BOOL)verifyRestoredWorkspace:(NSError **)error {
