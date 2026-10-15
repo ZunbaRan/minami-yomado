@@ -14,10 +14,17 @@ import time
 
 
 def run(command, *, data=None, timeout=30):
-    result = subprocess.run(command, input=data, capture_output=True, text=True, timeout=timeout)
+    label = Path(command[0]).name
+    if label in {"security", "openssl"}:
+        label += " " + command[1]
+    print("[update-runtime] guest identity command: " + label, flush=True)
+    try:
+        result = subprocess.run(command, input=data, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"guest setup command {label} timed out") from None
     if result.returncode:
         # Keep private temporary key locations/password arguments out of logs.
-        raise RuntimeError(f"guest setup command {Path(command[0]).name} exited {result.returncode}")
+        raise RuntimeError(f"guest setup command {label} exited {result.returncode}")
     return result.stdout, result.stderr
 
 
