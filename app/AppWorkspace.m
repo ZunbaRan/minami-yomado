@@ -1,5 +1,6 @@
 #import "AppWorkspace.h"
 #import "AppWorkspacePolicy.h"
+#import "UpdateWorkspaceRecovery.h"
 #import <ApplicationServices/ApplicationServices.h>
 
 NSString * const YMAppWorkspaceErrorDomain = @"dev.chekusu.yomado.app-workspace";
@@ -444,6 +445,67 @@ static BOOL YMWOrdinaryWindow(id element) {
         }
         return YES;
     } @finally { self.operationInProgress = NO; [self refreshInventory]; }
+}
+- (NSArray<NSDictionary *> *)restartOriginCheckpointsWithError:(NSError **)error {
+    NSAssert(NSThread.isMainThread, @"App workspace is main-thread only.");
+    if (self.operationInProgress) { [self fail:error code:30 text:@"窗口操作尚未结束，稍后再更新。"]; return nil; }
+    [self refreshInventory];
+    if (!self.inventoryValid) { [self fail:error code:30 text:@"无法核对窗口清单，保留当前工作区。"]; return nil; }
+    NSMutableArray *result = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (YMWPlacement *placement in self.placements) {
+        if (!placement.origin || !YMWorkspaceCheckpointWindow(placement.application.processIdentifier,
+            placement.windowID,self.windows,self.ownedIDs)) continue;
+        NSDictionary *identity = YMUpdateIdentityForWindowElement(placement.element);
+        NSDictionary *frame = YMWFrame(placement.element);
+        NSDictionary *display = YMWorkspaceDisplayForFrame(frame, self.displays);
+        NSDictionary *relative = YMWorkspaceGeometry(placement.origin[@"relative"]);
+        NSString *uuid = placement.origin[@"displayUUID"];
+        if (!identity || [identity[@"pid"] intValue] != placement.application.processIdentifier ||
+            [identity[@"windowID"] unsignedIntValue] != placement.windowID || !frame ||
+            ![self.ownedIDs containsObject:display[@"displayID"]] || !relative ||
+            ![uuid isKindOfClass:NSString.class] || !uuid.length || [seen containsObject:identity]) {
+            [self fail:error code:31 text:@"已有窗口的原位置无法精确交接，已暂停更新。"]; return nil;
+        }
+        [seen addObject:identity];
+        [result addObject:@{@"identity": identity, @"origin": @{@"displayUUID": uuid, @"relative": relative}}];
+    }
+    return result.copy;
+}
+- (BOOL)adoptRestartOriginCheckpoints:(NSArray<NSDictionary *> *)checkpoints error:(NSError **)error {
+    NSAssert(NSThread.isMainThread, @"App workspace is main-thread only.");
+    if (self.operationInProgress || ![checkpoints isKindOfClass:NSArray.class])
+        return [self fail:error code:30 text:@"窗口恢复尚未完成。"];
+    NSMutableArray *pending = [NSMutableArray array]; NSMutableSet *seen = [NSMutableSet set];
+    for (NSDictionary *checkpoint in checkpoints) {
+        NSDictionary *identity = checkpoint[@"identity"], *origin = checkpoint[@"origin"];
+        NSDictionary *relative = YMWorkspaceGeometry(origin[@"relative"]);
+        NSString *uuid = origin[@"displayUUID"];
+        id element = YMUpdateResolveWindowIdentity(identity, error);
+        NSDictionary *frame = element ? YMWFrame(element) : nil;
+        NSDictionary *display = YMWorkspaceDisplayForFrame(frame, self.displays);
+        if (!element || !frame || ![self.ownedIDs containsObject:display[@"displayID"]] || !relative ||
+            ![uuid isKindOfClass:NSString.class] || !uuid.length || [seen containsObject:identity])
+            return [self fail:error code:31 text:@"窗口原位置接管未完成，保留恢复记录供重试。"];
+        [seen addObject:identity];
+        YMWPlacement *placement = [YMWPlacement new];
+        placement.element = element;
+        placement.application = [NSRunningApplication runningApplicationWithProcessIdentifier:[identity[@"pid"] intValue]];
+        placement.bundleID = identity[@"bundleID"];
+        placement.windowID = [identity[@"windowID"] unsignedIntValue];
+        placement.lastDisplayID = [display[@"displayID"] unsignedIntValue];
+        placement.origin = @{@"displayUUID": uuid, @"relative": relative};
+        [pending addObject:placement];
+    }
+    // All exact lookups complete before changing any in-memory ownership.
+    for (YMWPlacement *placement in pending) {
+        for (YMWPlacement *old in self.placements.copy)
+            if (old.windowID == placement.windowID && old.application.processIdentifier == placement.application.processIdentifier)
+                [self.placements removeObject:old];
+        [self.placements addObject:placement];
+    }
+    [self refreshInventory];
+    return YES;
 }
 - (BOOL)restoreAll:(NSError **)error {
     for (NSNumber *ID in self.ownedIDs.copy) if (![self restoreDisplayID:ID.unsignedIntValue error:error]) return NO;

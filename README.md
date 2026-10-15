@@ -98,11 +98,15 @@ Yomado does not change passwords, lock-screen policy, screen savers, or login se
 
 ## Version and updates
 
-The panel footer links to [yomado.app](https://yomado.app/), this GitHub repository and the MIT license, alongside the installed version. Click the refresh icon next to the version, or **Check for Updates…** (`检查更新…`) in the menu-bar menu. The menu bar uses a transparent, monochrome silhouette of the night-window logo that follows the system appearance; the full app icon keeps its dark background.
+The panel footer links to [yomado.app](https://yomado.app/), this GitHub repository and the MIT license, alongside the installed version. Click the refresh icon next to the version, or **Check and Install Updates…** (`检查并安装更新…`) in the menu-bar menu. The menu bar uses a transparent, monochrome silhouette of the night-window logo that follows the system appearance; the full app icon keeps its dark background.
 
 Opening yomado again brings back its control panel, including after closing or minimizing it. Explicitly opening the panel recovers it onto a visible physical screen when one is available, without moving other apps or changing the display layout.
 
-Checking is manual: yomado queries the official GitHub releases list, including experimental prereleases, and offers a link to the newer release. Network errors are shown explicitly with a retry action. No account, telemetry or device identifiers are sent. Checking does not download, install, quit the app or change displays. To install a downloaded version, first save work and return apps from virtual displays, then quit the old copy and open the new one. Virtual displays are not retained across an app restart.
+Automatic updates are enabled by default and can be switched off in the panel or menu bar. The refresh icon and **Check and Install Updates…** use the same in-app flow: download a compatible stable release, verify the signed feed and archive, install it, and reopen yomado. Experimental releases are not installed automatically. No GitHub account or browser download is required. Errors and progress appear in the panel; an update can be cancelled before installation starts.
+
+Before restarting, yomado checkpoints active virtual screens and the exact existing windows inside them, then recreates those screens and restores those windows. It does not save documents or reconnect remote sessions. Dialogs, full-screen/minimized or unidentifiable windows, a virtual main display, missing window-control permission, or a changing layout postpone installation while the current app keeps running. After resolving the cause, check again to retry. Physical-display settings and unrelated application windows are not intentionally changed. Recovery refuses replacement windows or a different process, and stops if the display configuration changes. The private, short-lived checkpoint contains only window/process identities and geometry. See [update distribution and verification](docs/AUTOMATIC-UPDATES.md).
+
+Older versions without the in-app updater need one ordinary upgrade to an updater-capable version. Subsequent stable releases can install through yomado.
 
 ## WeChat window recovery (experimental)
 

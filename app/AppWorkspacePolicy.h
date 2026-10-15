@@ -27,6 +27,19 @@ static inline double YMWorkspaceIntersection(NSDictionary *a, NSDictionary *b) {
     double bottom = fmin([a[@"y"] doubleValue] + [a[@"height"] doubleValue], [b[@"y"] doubleValue] + [b[@"height"] doubleValue]);
     return fmax(0, right - left) * fmax(0, bottom - top);
 }
+// An update origin belongs only to the exact currently visible owned window.
+// A closed/replaced ID or a manual physical return cannot pass an old origin to
+// another window. Complete update inventory validation is a separate gate.
+static inline NSDictionary *YMWorkspaceCheckpointWindow(pid_t pid, uint32_t windowID,
+    NSArray<NSDictionary *> *inventory, NSArray<NSNumber *> *ownedIDs) {
+    NSDictionary *found=nil;
+    for (NSDictionary *window in inventory) {
+        if ([window[@"pid"] intValue]!=pid || [window[@"windowID"] unsignedIntValue]!=windowID) continue;
+        if (found) return nil;
+        found=window;
+    }
+    return found && [ownedIDs containsObject:found[@"displayID"]] ? found : nil;
+}
 // One display owns each window: greatest intersecting area. Ties favor a
 // physical display, then the smaller ID, independently of enumeration order.
 // Thin edge overlaps therefore do not count a window on two displays.

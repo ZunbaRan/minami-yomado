@@ -68,6 +68,7 @@
 
 @interface YMFakeController : ADController
 @property NSUInteger inventoryUpdates;
+@property NSUInteger panelCheckpoints;
 @property NSUInteger saves;
 @property NSUInteger reports;
 @property BOOL powerFails;
@@ -98,6 +99,7 @@
     NSError *error=nil; BOOL succeeded=operation(&error); completion(succeeded,error);
 }
 - (void)updateInventory { self.inventoryUpdates++; }
+- (void)storeUpdatePanelState { self.panelCheckpoints++; }
 - (void)saveDisplayProfiles { self.saves++; }
 - (void)reportTopologyError:(NSError *)error { (void)error; self.reports++; }
 - (void)powerAssertions:(BOOL)on { self.systemAssertion = self.displayAssertion = on && !self.powerFails ? 1 : 0; }
@@ -157,6 +159,66 @@
 @end
 @implementation YMSpyHeartbeat
 - (void)invalidate { self.invalidations++; }
+@end
+
+@interface YMControllerUpdateEngine : NSObject
+@property BOOL installationPending;
+@property BOOL installationAuthorized;
+@property BOOL automaticUpdatesEnabled;
+@property BOOL busy;
+@property BOOL canCancel;
+@property YMAutomaticUpdateStatus status;
+@property double progress;
+@property NSError *lastError;
+@property BOOL canCheck;
+@property NSString *latestVersion;
+@property NSString *latestBuild;
+@property NSUInteger deferrals;
+@end
+@implementation YMControllerUpdateEngine
+- (void)installationWasDeferredWithError:(NSError *)error { (void)error; self.deferrals++; self.installationAuthorized=NO; }
+@end
+@interface YMControllerUpdateRecovery : NSObject
+@property BOOL commitResult;
+@property NSUInteger commits;
+@property NSUInteger preparations;
+@property BOOL restoreResult;
+@property NSArray *restoredOriginCheckpoints;
+@property NSMutableArray *events;
+@end
+@implementation YMControllerUpdateRecovery
+- (BOOL)prepareRestartWithProfiles:(NSArray *)profiles targetVersion:(NSString *)version targetBuild:(NSString *)build originCheckpoints:(NSArray *)origins error:(NSError **)error {
+    (void)profiles; (void)version; (void)build; (void)origins; (void)error; self.preparations++; return YES;
+}
+- (BOOL)restoreWithProfiles:(NSArray *)profiles error:(NSError **)error { (void)profiles; (void)error; [self.events addObject:@"restore"]; return self.restoreResult; }
+- (BOOL)completeRestoration:(NSError **)error { (void)error; [self.events addObject:@"complete"]; return YES; }
+- (BOOL)cancelPreparedRestart:(NSError **)error { (void)error; return YES; }
+- (BOOL)commitPreparedRestart:(NSError **)error {
+    self.commits++;
+    if (!self.commitResult && error) *error=[NSError errorWithDomain:@"fixture" code:1 userInfo:nil];
+    return self.commitResult;
+}
+@end
+@interface YMControllerUpdateWorkspace : NSObject
+@property NSMutableArray *events;
+@property BOOL adoptedNonemptyOrigins;
+@end
+@implementation YMControllerUpdateWorkspace
+- (NSArray *)restartOriginCheckpointsWithError:(NSError **)error { (void)error; return @[]; }
+- (BOOL)adoptRestartOriginCheckpoints:(NSArray *)points error:(NSError **)error {
+    (void)error;
+    self.adoptedNonemptyOrigins=points.count>0 && [self.events.lastObject isEqual:@"inventory"];
+    [self.events addObject:@"adopt"];
+    return self.adoptedNonemptyOrigins;
+}
+@end
+@interface YMUpdateCompletionController : YMFakeController
+@property NSMutableArray *events;
+@property NSError *completionError;
+@end
+@implementation YMUpdateCompletionController
+- (void)updateInventory { [self.events addObject:@"inventory"]; }
+- (void)finishUpdateRecoveryWithError:(NSError *)error { self.completionError=error; [self.events addObject:@"finished"]; }
 @end
 
 static NSUInteger Tests, Failures;
@@ -360,6 +422,63 @@ int main(void) {
                "existing topology failure still cancels quit");
         Expect(recoverySpy.opens == 1,
                "safety recovery can reopen a previously closed panel through the actual showWindow path");
+
+        // Exact production updater termination branch, with no defaults writes,
+        // WindowServer calls, process termination or third-party app access.
+        c=Controller(&t,&d,&p,&s);
+        YMControllerUpdateEngine *updater=[YMControllerUpdateEngine new];
+        updater.installationPending=YES; updater.installationAuthorized=YES;
+        updater.latestVersion=@"0.3.7"; updater.latestBuild=@"13";
+        c.automaticUpdater=(YMAutomaticUpdater *)(id)updater;
+        YMControllerUpdateRecovery *journal=[YMControllerUpdateRecovery new]; journal.commitResult=YES;
+        c.updateRecovery=(YMUpdateWorkspaceRecovery *)(id)journal;
+        c.appWorkspace=(YMAppWorkspace *)(id)[YMControllerUpdateWorkspace new];
+        Expect([c prepareUpdateRestart:NULL] && journal.preparations==1 && c.updateWorkspaceBusy,
+            "preparation checkpoints and freezes yomado workspace controls");
+        Expect(![c canMoveIntoProfile:s], "prepared update prevents moving more apps into owned screens");
+        NSUInteger saved=c.saves;
+        [c create:nil]; [c stop:nil];
+        // Fake stop itself does not include production action guard; create must.
+        Expect(d.creates==0 && c.saves==saved, "prepared update prevents a new screen operation");
+        c.stopCalls=0;
+        Expect([c applicationShouldTerminate:unusedSender]==NSTerminateNow && journal.commits==1,
+            "authorized update rechecks checkpoint immediately at termination");
+        Expect(c.stopCalls==0 && [(YMFakeDisplay *)s.display destroys]==0 && c.panelCheckpoints==1,
+            "update quit does not sweep apps back to physical screens or remove sibling displays early");
+        journal.commitResult=NO; c.updateWorkspaceBusy=YES;
+        Expect([c applicationShouldTerminate:unusedSender]==NSTerminateCancel && updater.deferrals==1,
+            "late window change vetoes installer termination");
+        Expect(!c.updateWorkspaceBusy && !updater.installationAuthorized && updater.installationPending,
+            "late veto unlocks app controls while keeping installer pending and gated");
+        NSUInteger commits=journal.commits;
+        Expect([c applicationShouldTerminate:unusedSender]==NSTerminateCancel && journal.commits==commits,
+            "later ordinary quit cannot bypass a deferred update's preparation gate");
+        c.displayOperationInProgress=YES;
+        NSUInteger preparations=journal.preparations;
+        Expect(![c prepareUpdateRestart:NULL] && journal.preparations==preparations,
+            "in-flight display operation prevents preparing an updater restart");
+        c.displayOperationInProgress=NO; c.updateRecoveryFailed=YES;
+        Expect(![c prepareUpdateRestart:NULL] && journal.preparations==preparations,
+            "failed recovery cannot be overwritten by another update checkpoint");
+
+        YMUpdateCompletionController *completionController=[YMUpdateCompletionController new];
+        NSMutableArray *events=[NSMutableArray array]; completionController.events=events;
+        completionController.pendingUpdateProfiles=@[];
+        YMControllerUpdateRecovery *restoreJournal=[YMControllerUpdateRecovery new];
+        restoreJournal.events=events; restoreJournal.restoreResult=YES;
+        restoreJournal.restoredOriginCheckpoints=@[@{@"fixture":@"nonempty-return-point"}];
+        completionController.updateRecovery=(YMUpdateWorkspaceRecovery *)(id)restoreJournal;
+        YMControllerUpdateWorkspace *restoreWorkspace=[YMControllerUpdateWorkspace new];
+        restoreWorkspace.events=events;
+        completionController.appWorkspace=(YMAppWorkspace *)(id)restoreWorkspace;
+        [completionController restoreUpdateProfileAtIndex:0];
+        Expect(restoreWorkspace.adoptedNonemptyOrigins && [events isEqual:@[@"restore",@"inventory",@"adopt",@"complete",@"finished"]],
+            "nonempty return points are adopted only after refreshing recreated display inventory");
+        Expect(completionController.completionError==nil,"verified complete recovery succeeds");
+        [events removeAllObjects]; restoreJournal.restoreResult=NO;
+        [completionController restoreUpdateProfileAtIndex:0];
+        Expect(completionController.completionError!=nil && [events isEqual:@[@"restore",@"finished"]],
+            "backend failure without NSError cannot be announced as a successful recovery");
 
         Expect(NSApp == nil,"all controller tests leave NSApplication uninitialized");
         printf("Controller boundary tests: %lu passed, %lu failed; no GUI or display calls executed.\n",(unsigned long)(Tests-Failures),(unsigned long)Failures);
