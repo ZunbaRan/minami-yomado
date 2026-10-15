@@ -3,6 +3,8 @@
 #import "YMDisplayTopology.h"
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <dlfcn.h>
+#import <libproc.h>
 
 static BOOL FFail(NSError **error, NSInteger code, NSString *description) {
     if (error) *error=[NSError errorWithDomain:@"fixture.occupied-workspace" code:code
@@ -35,6 +37,41 @@ static NSDictionary *FWindowDiagnostic(NSDictionary *window) {
 static NSDictionary *FErrorDiagnostic(NSError *error) {
     return error ? @{@"domain":error.domain,@"code":@(error.code),
         @"description":error.localizedDescription} : @{};
+}
+static id FAXRead(AXUIElementRef element,CFStringRef attribute,AXError *status) {
+    CFTypeRef value=NULL; *status=AXUIElementCopyAttributeValue(element,attribute,&value);
+    return CFBridgingRelease(value);
+}
+static NSDictionary *FAXElementDiagnostic(id element) {
+    if (!element || CFGetTypeID((__bridge CFTypeRef)element)!=AXUIElementGetTypeID()) return @{};
+    AXUIElementRef ref=(__bridge AXUIElementRef)element;
+    typedef AXError (*WindowIDFunction)(AXUIElementRef,CGWindowID *);
+    WindowIDFunction function=(WindowIDFunction)dlsym(RTLD_DEFAULT,"_AXUIElementGetWindow");
+    CGWindowID ID=0; AXError idStatus=function ? function(ref,&ID) : kAXErrorNotImplemented;
+    AXError roleStatus,subroleStatus;
+    id role=FAXRead(ref,kAXRoleAttribute,&roleStatus),subrole=FAXRead(ref,kAXSubroleAttribute,&subroleStatus);
+    return @{@"windowID":@(ID),@"windowIDStatus":@(idStatus),@"role":role ?: @"",@"roleStatus":@(roleStatus),
+        @"subrole":subrole ?: @"",@"subroleStatus":@(subroleStatus)};
+}
+static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
+    AXUIElementRef application=AXUIElementCreateApplication(pid);
+    AXUIElementSetMessagingTimeout(application,.2);
+    AXError windowsStatus,menuStatus,extrasStatus;
+    id windows=FAXRead(application,kAXWindowsAttribute,&windowsStatus);
+    id menu=FAXRead(application,kAXMenuBarAttribute,&menuStatus);
+    id extras=FAXRead(application,CFSTR("AXExtrasMenuBar"),&extrasStatus);
+    NSMutableArray *items=[NSMutableArray array];
+    if ([windows isKindOfClass:NSArray.class]) for (id window in windows) [items addObject:FAXElementDiagnostic(window)];
+    CFRelease(application);
+    char executable[PROC_PIDPATHINFO_MAXSIZE]={0};
+    int pathLength=proc_pidpath(pid,executable,sizeof(executable));
+    NSString *path=pathLength>0 ? [NSString stringWithUTF8String:executable] : nil;
+    BOOL systemExecutable=[path hasPrefix:@"/System/"] || [path hasPrefix:@"/usr/libexec/"];
+    return @{@"pid":@(pid),@"windowsStatus":@(windowsStatus),@"windows":items,
+        @"menuBarStatus":@(menuStatus),@"menuBar":FAXElementDiagnostic(menu),
+        @"extrasMenuBarStatus":@(extrasStatus),@"extrasMenuBar":FAXElementDiagnostic(extras),
+        @"processPathAvailable":@(pathLength>0),@"isSystemExecutable":@(systemExecutable),
+        @"systemExecutablePath":systemExecutable ? path : @""};
 }
 @interface YMUpdateRuntimeWorkspace ()
 @property(nonatomic, copy) NSString *directory;
@@ -111,12 +148,14 @@ static NSDictionary *FErrorDiagnostic(NSError *error) {
         self.loggedSurfaceInventory=YES;
         CGRect owned=CGDisplayBounds(self.display.displayID);
         NSMutableArray *candidates=[NSMutableArray array];
+        NSMutableSet<NSNumber *> *owners=[NSMutableSet set];
         NSArray *raw=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll|kCGWindowListExcludeDesktopElements,0));
         for (NSDictionary *entry in raw) {
             CGRect frame;
             if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds],&frame) ||
                 CGRectIsEmpty(CGRectIntersection(frame,owned))) continue;
             NSNumber *pid=entry[(__bridge NSString *)kCGWindowOwnerPID] ?: @0;
+            [owners addObject:pid];
             NSRunningApplication *app=[NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
             [candidates addObject:@{@"pid":pid,@"windowID":entry[(__bridge NSString *)kCGWindowNumber] ?: @0,
                 @"bundleID":app.bundleIdentifier ?: @"",@"ownerName":entry[(__bridge NSString *)kCGWindowOwnerName] ?: @"",
@@ -127,9 +166,23 @@ static NSDictionary *FErrorDiagnostic(NSError *error) {
         }
         // Disposable guest diagnostics only. Do not read window titles or
         // alter the production inventory classifier to admit these entries.
+        NSMutableArray *AXOwners=[NSMutableArray array];
+        for (NSNumber *pid in [owners.allObjects sortedArrayUsingSelector:@selector(compare:)])
+            [AXOwners addObject:FAXApplicationDiagnostic(pid.intValue)];
+        NSMutableArray *screenFrames=[NSMutableArray array];
+        for (NSScreen *screen in NSScreen.screens) {
+            NSNumber *ID=screen.deviceDescription[@"NSScreenNumber"];
+            if (![ID isEqual:@(self.display.displayID)]) continue;
+            NSRect frame=screen.frame,visible=screen.visibleFrame;
+            [screenFrames addObject:@{@"displayID":ID,@"cocoaFrame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),
+                @"width":@(frame.size.width),@"height":@(frame.size.height)},
+                @"cocoaVisibleFrame":@{@"x":@(visible.origin.x),@"y":@(visible.origin.y),
+                @"width":@(visible.size.width),@"height":@(visible.size.height)},
+                @"topInset":@(NSMaxY(frame)-NSMaxY(visible))}];
+        }
         self.record(@"occupied-cg-inventory",@{@"displayID":@(self.display.displayID),
             @"bounds":@{@"x":@(owned.origin.x),@"y":@(owned.origin.y),@"width":@(owned.size.width),@"height":@(owned.size.height)},
-            @"candidates":candidates});
+            @"candidates":candidates,@"AXOwners":AXOwners,@"screenFrames":screenFrames});
     }
     NSArray *windows=after[@"windows"] ?: @[];
     BOOL inventoryMatches=windows.count==1 && [windows[0][@"identity"] isEqual:workIdentity] &&
