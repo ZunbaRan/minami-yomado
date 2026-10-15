@@ -31,7 +31,10 @@ def write(name, value):
     (evidence_dir / name).write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
 def run(argv, timeout=20, check=True):
-    result = subprocess.run([str(x) for x in argv], capture_output=True, text=True, timeout=timeout)
+    environment = os.environ.copy()
+    if pathlib.Path(str(argv[0])).name == 'panel-menu-actions':
+        environment['YM_QA_MENU_FAILURE_DIRECTORY'] = str(evidence_dir / 'menu-failures')
+    result = subprocess.run([str(x) for x in argv], capture_output=True, text=True, timeout=timeout, env=environment)
     if check and result.returncode:
         raise RuntimeError(f'helper failed ({result.returncode}): {pathlib.Path(str(argv[0])).name} {argv[1:]}\n{result.stdout}\n{result.stderr}')
     return result
