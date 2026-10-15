@@ -1,12 +1,19 @@
 #import "AutomaticUpdater.h"
 #import <Sparkle/Sparkle.h>
 #import <math.h>
+#import <sys/stat.h>
+#import <unistd.h>
 
 NSString * const YMAutomaticUpdaterErrorDomain = @"dev.chekusu.yomado.automatic-update";
 
 static NSError *YMUpdaterError(NSInteger code, NSString *message) {
     return [NSError errorWithDomain:YMAutomaticUpdaterErrorDomain code:code
                           userInfo:@{NSLocalizedDescriptionKey: message}];
+}
+static BOOL YMValidPOSIXIdentifier(id value) {
+    if (![value isKindOfClass:NSNumber.class]) return NO;
+    double number = [value doubleValue];
+    return isfinite(number) && number >= 0 && number <= UINT32_MAX && floor(number) == number;
 }
 
 // Narrow engine boundary permits tests without starting Sparkle or NSApplication.
@@ -46,6 +53,7 @@ static NSError *YMUpdaterError(NSInteger code, NSString *message) {
 - (void)publishStatus:(YMAutomaticUpdateStatus)status progress:(double)progress;
 - (void)recordError:(NSError *)error blocked:(BOOL)blocked;
 - (NSError *)authorizationPreflightError;
+- (NSDictionary *)installationPermissionMetadata;
 - (NSError *)policyErrorForItem:(SUAppcastItem *)item;
 - (void)foundItem:(SUAppcastItem *)item state:(SPUUserUpdateState *)state reply:(void (^)(SPUUserUpdateChoice))reply;
 - (void)prepareWithReply:(void (^)(SPUUserUpdateChoice))reply;
@@ -171,11 +179,55 @@ static NSError *YMUpdaterError(NSInteger code, NSString *message) {
     self.errorHandler = nil;
     self.prepareForInstallation = nil;
 }
-- (NSError *)authorizationPreflightError {
+- (NSDictionary *)installationPermissionMetadata {
     NSString *path = self.hostBundle.bundlePath;
     NSFileManager *files = NSFileManager.defaultManager;
-    if (![path.pathExtension.lowercaseString isEqualToString:@"app"] ||
-        ![files isWritableFileAtPath:path] || ![files isWritableFileAtPath:path.stringByDeletingLastPathComponent]) {
+    NSString *parent = path.stringByDeletingLastPathComponent;
+    struct stat appInfo, parentInfo;
+    if (!path.length || lstat(path.fileSystemRepresentation, &appInfo) != 0 ||
+        lstat(parent.fileSystemRepresentation, &parentInfo) != 0) return nil;
+    int count = getgroups(0, NULL);
+    if (count < 0 || count > 2048) return nil;
+    gid_t *groups = count ? calloc((size_t)count, sizeof(gid_t)) : NULL;
+    if (count && !groups) return nil;
+    int actualCount = count ? getgroups(count, groups) : 0;
+    if (actualCount < 0) { free(groups); return nil; }
+    NSMutableArray *memberships = [NSMutableArray arrayWithCapacity:(NSUInteger)actualCount];
+    for (int i = 0; i < actualCount; i++) [memberships addObject:@(groups[i])];
+    free(groups);
+    return @{@"applicationBundle":@([path.pathExtension.lowercaseString isEqualToString:@"app"]),
+        @"bundleDirectory":@(S_ISDIR(appInfo.st_mode)), @"parentDirectory":@(S_ISDIR(parentInfo.st_mode)),
+        @"bundleWritable":@([files isWritableFileAtPath:path]), @"parentWritable":@([files isWritableFileAtPath:parent]),
+        @"restrictedFlags":@(((appInfo.st_flags | parentInfo.st_flags) & (UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND)) != 0),
+        @"ownerUID":@(appInfo.st_uid), @"ownerGID":@(appInfo.st_gid),
+        @"realUID":@(getuid()), @"effectiveUID":@(geteuid()), @"effectiveGID":@(getegid()),
+        @"supplementaryGIDs":memberships.copy};
+}
+- (NSError *)authorizationPreflightError {
+    NSDictionary *permissions = [self installationPermissionMetadata];
+    if (![permissions isKindOfClass:NSDictionary.class]) permissions = nil;
+    BOOL allowed = permissions != nil;
+    for (NSString *key in @[@"applicationBundle",@"bundleDirectory",@"parentDirectory",@"bundleWritable",@"parentWritable"])
+        allowed = allowed && [permissions[key] isEqual:@YES];
+    allowed = allowed && [permissions[@"restrictedFlags"] isEqual:@NO];
+    for (NSString *key in @[@"ownerUID",@"ownerGID",@"realUID",@"effectiveUID",@"effectiveGID"])
+        allowed = allowed && YMValidPOSIXIdentifier(permissions[key]);
+    NSArray *groups = permissions[@"supplementaryGIDs"];
+    allowed = allowed && [groups isKindOfClass:NSArray.class];
+    if (allowed) {
+        for (id group in groups) if (!YMValidPOSIXIdentifier(group)) { allowed = NO; break; }
+    }
+    if (allowed) {
+        // Sparkle also preserves the old bundle's owner/group. Writability
+        // alone would admit root:admin installations and prompt for a password.
+        // Read-only credentials provide a conservative gate; never chown or
+        // ask for authorization while deciding whether an update is safe.
+        allowed = [permissions[@"effectiveUID"] unsignedIntValue] != 0 &&
+            [permissions[@"realUID"] isEqual:permissions[@"effectiveUID"]] &&
+            [permissions[@"ownerUID"] isEqual:permissions[@"effectiveUID"]] &&
+            ([permissions[@"ownerGID"] isEqual:permissions[@"effectiveGID"]] || [groups containsObject:permissions[@"ownerGID"]]);
+    }
+    if (!allowed) {
         return YMUpdaterError(3, @"This copy cannot be updated without system authorization. Keep the app running and move an owned copy to Applications before retrying.");
     }
     return nil;

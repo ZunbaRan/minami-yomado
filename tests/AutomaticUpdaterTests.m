@@ -14,7 +14,14 @@ static NSError *Failure(void) { return [NSError errorWithDomain:@"test" code:9 u
 @interface YMAutomaticUpdater (Tests)
 - (instancetype)initWithHostBundle:(NSBundle *)bundle engine:(id)engine;
 - (NSError *)authorizationPreflightError;
+- (NSDictionary *)installationPermissionMetadata;
 @property(nonatomic, readonly) id<SPUUserDriver> userDriver;
+@end
+@interface FixturePermissionUpdater : YMAutomaticUpdater
+@property(copy) NSDictionary *permissionMetadata;
+@end
+@implementation FixturePermissionUpdater
+- (NSDictionary *)installationPermissionMetadata { return self.permissionMetadata; }
 @end
 @interface FixtureUpdater : YMAutomaticUpdater
 @property NSError *preflightError;
@@ -75,19 +82,87 @@ static FixtureUpdater *Make(FixtureEngine **engine) {
     Check([u startWithError:NULL], "injected updater starts");
     return u;
 }
-static void Found(FixtureUpdater *u, FixtureItem *item, BOOL manual, SPUUserUpdateStage stage, void (^reply)(SPUUserUpdateChoice)) {
+static void Found(YMAutomaticUpdater *u, FixtureItem *item, BOOL manual, SPUUserUpdateStage stage, void (^reply)(SPUUserUpdateChoice)) {
     FixtureState *state=[FixtureState new]; state.stage=stage; state.userInitiated=manual;
     [u.userDriver showUpdateFoundWithAppcastItem:(id)item state:(id)state reply:reply];
 }
 static void Finish(FixtureUpdater *u, NSError *error) {
     [(id<SPUUpdaterDelegate>)u updater:(id)[NSObject new] didFinishUpdateCycleForUpdateCheck:SPUUpdateCheckUpdates error:error];
 }
-static void Begin(FixtureUpdater *u, BOOL manual) {
+static void Begin(YMAutomaticUpdater *u, BOOL manual) {
     NSError *error=nil;
     Check([(id<SPUUpdaterDelegate>)u updater:(id)[NSObject new] mayPerformUpdateCheck:manual?SPUUpdateCheckUpdates:SPUUpdateCheckUpdatesInBackground error:&error], "allowed check enters same driver lifecycle");
 }
+static NSMutableDictionary *OwnedInstallation(void) {
+    return [@{@"applicationBundle":@YES,@"bundleDirectory":@YES,@"parentDirectory":@YES,
+        @"bundleWritable":@YES,@"parentWritable":@YES,@"restrictedFlags":@NO,
+        @"ownerUID":@501,@"ownerGID":@20,@"realUID":@501,@"effectiveUID":@501,
+        @"effectiveGID":@20,@"supplementaryGIDs":@[@20,@80]} mutableCopy];
+}
+static void AuthorizationOwnershipGuards(void) {
+    FixturePermissionUpdater *u=[[FixturePermissionUpdater alloc] initWithHostBundle:NSBundle.mainBundle engine:[FixtureEngine new]];
+    NSMutableDictionary *metadata=OwnedInstallation(); u.permissionMetadata=metadata;
+    Check([u authorizationPreflightError]==nil,"owned writable application has non-interactive ownership");
+    metadata[@"ownerUID"]=@0; metadata[@"ownerGID"]=@80; u.permissionMetadata=metadata;
+    Check([u authorizationPreflightError]!=nil,"root-owned group-writable app is blocked before Sparkle can request administrator authorization");
+    for (NSUInteger scenario=0;scenario<19;scenario++) {
+        metadata=OwnedInstallation(); BOOL expected=NO;
+        switch(scenario) {
+            case 0: metadata[@"ownerGID"]=@80; expected=YES; break;
+            case 1: metadata[@"supplementaryGIDs"]=@[]; expected=YES; break;
+            case 2: metadata[@"ownerUID"]=@502; break;
+            case 3: metadata[@"ownerGID"]=@999; break;
+            case 4: metadata[@"realUID"]=@502; break;
+            case 5: metadata[@"realUID"]=@0; metadata[@"effectiveUID"]=@0; metadata[@"ownerUID"]=@0; break;
+            case 6: [metadata removeObjectForKey:@"ownerUID"]; break;
+            case 7: metadata[@"ownerUID"]=@"501"; break;
+            case 8: metadata[@"ownerGID"]=@20.5; break;
+            case 9: metadata[@"ownerGID"]=@(-1); break;
+            case 10: metadata[@"effectiveUID"]=@(UINT64_MAX); break;
+            case 11: metadata[@"supplementaryGIDs"]=@[@"80"]; break;
+            case 12: [metadata removeObjectForKey:@"supplementaryGIDs"]; break;
+            case 13: metadata[@"bundleDirectory"]=@NO; break;
+            case 14: metadata[@"parentDirectory"]=@NO; break;
+            case 15: metadata[@"bundleWritable"]=@NO; break;
+            case 16: metadata[@"parentWritable"]=@NO; break;
+            case 17: metadata[@"restrictedFlags"]=@YES; break;
+            case 18: metadata[@"applicationBundle"]=@NO; break;
+        }
+        u.permissionMetadata=metadata;
+        Check(([u authorizationPreflightError]==nil)==expected,"read-only owner/group/type/writability policy matches non-interactive installation boundary");
+    }
+    u.permissionMetadata=nil;
+    Check([u authorizationPreflightError]!=nil,"missing file or process metadata fails closed");
+    for(NSNumber *manual in @[@NO,@YES]) {
+        u=[[FixturePermissionUpdater alloc] initWithHostBundle:NSBundle.mainBundle engine:[FixtureEngine new]];
+        Check([u startWithError:NULL],"permission-policy driver starts without real engine"); Begin(u,manual.boolValue);
+        metadata=OwnedInstallation(); metadata[@"ownerUID"]=@0; metadata[@"ownerGID"]=@80; u.permissionMetadata=metadata;
+        __block NSUInteger replies=0, preparations=0;
+        u.prepareForInstallation=^(YMUpdatePreparationCompletion completion){ preparations++; completion(YES,nil); };
+        Found(u,[FixtureItem new],manual.boolValue,SPUUserUpdateStageNotDownloaded,^(SPUUserUpdateChoice choice) {
+            replies++; Check(choice==SPUUserUpdateChoiceDismiss,"ownership requiring authorization blocks both download origins");
+        });
+        Check(replies==1 && preparations==0 && u.status==YMAutomaticUpdateBlocked && !u.installationPending,
+            "authorization block keeps running app intact without workspace preparation");
+        Check(u.lastError.code==3 && ![u.lastError.localizedDescription containsString:@"501"],"authorization status contains no account identifier");
+    }
+    u=[[FixturePermissionUpdater alloc] initWithHostBundle:NSBundle.mainBundle engine:[FixtureEngine new]];
+    Check([u startWithError:NULL],"late-ownership fixture starts"); Begin(u,YES);
+    u.permissionMetadata=OwnedInstallation();
+    __block YMUpdatePreparationCompletion completion; __block NSUInteger decisions=0;
+    u.prepareForInstallation=^(YMUpdatePreparationCompletion finish){ completion=[finish copy]; };
+    [u.userDriver showReadyToInstallAndRelaunch:^(SPUUserUpdateChoice choice) {
+        decisions++; Check(choice==SPUUserUpdateChoiceSkip,"ownership changed during preparation cancels before installation");
+    }];
+    Check(completion!=nil && decisions==0,"owned installation reaches asynchronous workspace preparation");
+    metadata=OwnedInstallation(); metadata[@"ownerGID"]=@999; u.permissionMetadata=metadata;
+    completion(YES,nil);
+    Check(decisions==1 && !u.installationPending && !u.installationAuthorized && u.status==YMAutomaticUpdateBlocked,
+        "late group mismatch cannot arm the installer or authorize app termination");
+}
 int main(void) { @autoreleasepool {
     Check(NSApp==nil, "tests begin without NSApplication");
+    AuthorizationOwnershipGuards();
     {
         FixtureEngine *e; FixtureUpdater *u=Make(&e);
         Check(e.starts==1 && !e.automaticallyDownloadsUpdates && !e.sendsSystemProfile, "start disables ungated install-on-quit and system profile");

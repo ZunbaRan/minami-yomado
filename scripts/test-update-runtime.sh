@@ -10,6 +10,7 @@ if [ "$ym_build_only" = false ] && { [ "${GITHUB_ACTIONS:-}" != true ] || \
   printf 'Refusing GUI/trust changes outside a disposable GitHub-hosted macOS runner. Use --build-only locally.\n' >&2
   exit 2
 fi
+printf '[update-runtime] build fixtures\n'
 mkdir -p "$ym_evidence"
 ym_evidence="$(cd "$ym_evidence" && pwd -P)"
 ym_sparkle="$("$ym_root/scripts/fetch-sparkle.sh")"
@@ -106,6 +107,7 @@ ym_sign_bundle() {
 }
 ym_result=0
 for ym_case in update tampered-feed tampered-archive cancel gate-veto offline automatic occupied; do
+  printf '[update-runtime] %s prepare\n' "$ym_case"
   ym_case_evidence="$ym_evidence/$ym_case"
   ym_case_root="$ym_temporary/$ym_case"
   mkdir -p "$ym_case_evidence" "$ym_case_root/server" "$ym_case_root/install"
@@ -193,26 +195,62 @@ PY
   fi
   ditto --norsrc --noextattr "$ym_case_root/build-1/YomadoUpdateFixture.app" "$ym_case_root/install/YomadoUpdateFixture.app"
   if [ "$ym_case" = offline ]; then kill "$ym_server_pid"; wait "$ym_server_pid" 2>/dev/null || true; ym_server_pid=""; fi
+  printf '[update-runtime] %s launch\n' "$ym_case"
   "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" > "$ym_case_evidence/app.stdout" 2> "$ym_case_evidence/app.stderr" &
   ym_fixture_pid=$!
-  python3 - "$ym_case_evidence/events.jsonl" "$ym_case" <<'PY'
+  python3 - "$ym_case_evidence/events.jsonl" "$ym_case" "$ym_fixture_pid" "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" <<'PY'
 from pathlib import Path
-import json,sys,time
-p,case=Path(sys.argv[1]),sys.argv[2];end=time.monotonic()+150;terminal=None
+import json,subprocess,sys,time
+p,case,initial_pid,executable=Path(sys.argv[1]),sys.argv[2],int(sys.argv[3]),sys.argv[4]
+started=time.monotonic();end=started+150;terminal=None;empty_since=None;next_summary=started;reason='timeout';observations=[]
+def live(pid):
+    try:
+        result=subprocess.run(['ps','-p',str(pid),'-o','stat=','-o','command='],capture_output=True,text=True,timeout=3)
+        parts=result.stdout.strip().split(None,1)
+        return result.returncode==0 and len(parts)==2 and not parts[0].startswith('Z') and (parts[1]==executable or parts[1].startswith(executable+' '))
+    except (subprocess.TimeoutExpired,OSError):return False
 while time.monotonic()<end:
     records=[]
     if p.exists():
         for line in p.read_text().splitlines():
             try:records.append(json.loads(line))
             except ValueError:pass
-    seen={r['event'] for r in records}
-    done=('updated-and-recovered' in seen or 'recovery-failed' in seen or 'fixture-failure' in seen) if case in ('update','automatic','occupied') else (
-        'updater-error' in seen or (case=='cancel' and 'cancel-requested' in seen))
+    seen={r['event'] for r in records};last=records[-1] if records else {}
+    failure=seen.intersection({'start-failed','fixture-failure','recovery-failed','updater-error'})
+    done=bool(failure) or 'updated-and-recovered' in seen or (case=='cancel' and 'cancel-requested' in seen)
     if done:
+        reason=sorted(failure)[0] if failure else ('cancel-requested' if case=='cancel' else 'updated-and-recovered')
         terminal=terminal or time.monotonic()
         if time.monotonic()-terminal>=8:break
+    if time.monotonic()>=next_summary:
+        pids={initial_pid}|{r['pid'] for r in records if r['event']=='launched'}
+        living={str(pid):live(pid) for pid in sorted(pids)}
+        observation={'case':case,'elapsed':round(time.monotonic()-started,1),'event':last.get('event','none'),
+                     'code':last.get('code',last.get('errorCode')),'status':last.get('status'),'pidsAlive':living}
+        observations.append(observation);print(json.dumps(observation),flush=True);next_summary=time.monotonic()+15
+        if any(living.values()):empty_since=None
+        else:empty_since=empty_since or time.monotonic()
+    if empty_since is not None and not done:
+        # A successfully armed installer can temporarily leave no host process.
+        # Give its relaunch time to start; a crash before installation needs no such delay.
+        installing=any(r.get('authorized') or (r['event']=='termination-gate' and r.get('committed')) for r in records)
+        if time.monotonic()-empty_since>=(45 if installing else 3):
+            reason='no-host-after-relaunch-grace' if installing else 'host-exited-before-install';break
     time.sleep(.2)
+report={'case':case,'reason':reason,'elapsed':round(time.monotonic()-started,2),'observations':observations}
+p.with_name('wait-result.json').write_text(json.dumps(report,indent=2)+'\n')
+print('[update-runtime] '+case+' observation completed: '+reason,flush=True)
 PY
+  python3 - "$ym_case_evidence/unified-fixture.log" <<'PYLOG'
+from pathlib import Path
+import subprocess,sys
+predicate='process == "UpdateRuntimeFixture" OR subsystem == "org.sparkle-project.Sparkle" OR process == "Autoupdate" OR process == "Updater"'
+try:
+    result=subprocess.run(['/usr/bin/log','show','--last','4m','--style','compact','--predicate',predicate],capture_output=True,text=True,timeout=20)
+    Path(sys.argv[1]).write_text(result.stdout+'\n'+result.stderr)
+except subprocess.TimeoutExpired:
+    Path(sys.argv[1]).write_text('Fixture-scoped unified log collection timed out.\n')
+PYLOG
   screencapture -x "$ym_case_evidence/desktop.png" 2> "$ym_case_evidence/screenshot.log" || true
   python3 - "$ym_case_evidence/observation-end.json" <<'PYEND'
 import json,sys,time
