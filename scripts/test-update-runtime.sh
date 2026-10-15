@@ -345,10 +345,21 @@ except subprocess.TimeoutExpired:
     Path(sys.argv[1]).write_text('Fixture-scoped unified log collection timed out.\n')
 PYLOG
   screencapture -x "$ym_case_evidence/desktop.png" 2> "$ym_case_evidence/screenshot.log" || true
-  python3 - "$ym_case_evidence/observation-end.json" <<'PYEND'
-import json,sys,time
+  python3 - "$ym_case_evidence/observation-end.json" "$ym_case_evidence/events.jsonl" \
+    "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" <<'PYEND'
+import json,subprocess,sys,time
 from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({'time':time.time()})+'\n')
+events=Path(sys.argv[2]);executable=sys.argv[3]
+records=[json.loads(line) for line in events.read_text().splitlines()] if events.exists() else []
+report={'time':time.time(),'pidsAlive':{}}
+for pid in {r['pid'] for r in records if r['event']=='launched'}:
+    try:
+        result=subprocess.run(['ps','-p',str(pid),'-o','stat=','-o','command='],capture_output=True,text=True,timeout=3)
+        parts=result.stdout.strip().split(None,1)
+        alive=result.returncode==0 and len(parts)==2 and not parts[0].startswith('Z') and (parts[1]==executable or parts[1].startswith(executable+' '))
+    except (subprocess.TimeoutExpired,OSError):alive=False
+    report['pidsAlive'][str(pid)]=bool(alive)
+Path(sys.argv[1]).write_text(json.dumps(report)+'\n')
 PYEND
   # Stop only fixture PIDs recorded by this test, including the relaunched copy.
   python3 - "$ym_case_evidence/events.jsonl" "$ym_case_root/install/YomadoUpdateFixture.app/Contents/MacOS/UpdateRuntimeFixture" <<'PY'
@@ -378,9 +389,11 @@ events=[json.loads(x) for x in (d/'events.jsonl').read_text().splitlines()] if (
 seen={r['event'] for r in events};build=plistlib.loads((app/'Contents/Info.plist').read_bytes())['CFBundleVersion']
 errors=[r for r in events if r['event']=='updater-error'];old=[r for r in events if r['event']=='launched' and r['build']=='1']
 new=[r for r in events if r['event']=='launched' and r['build']=='2'];log=(d/'server.log').read_text()
+end_observation=json.loads((d/'observation-end.json').read_text())
 checks={'old-launched':len(old)==1,'no-start-or-fixture-failure':not seen.intersection({'start-failed','fixture-failure'})}
 if case in ('update','automatic','occupied'):
     checks.update({'installed-build2':build=='2','new-process':len(new)==1 and old and new[0]['pid']!=old[0]['pid'],
+      'new-process-still-running':len(new)==1 and end_observation['pidsAlive'].get(str(new[0]['pid']),False),
       'workspace-prepared':any(r['event']=='workspace-prepared' and r['ready'] for r in events),
       'termination-committed':any(r['event']=='termination-gate' and r['committed'] for r in events),
       'recovered-after-install':any(r['event']=='updated-and-recovered' and r.get('journalConsumed') for r in events),'archive-requested':('GET /'+case+'/update.zip HTTP') in log,
@@ -414,6 +427,7 @@ if case in ('update','automatic','occupied'):
             checks['physical-probe-never-moved']=all(r['frame']==baseline['probe']['frame'] for r in samples['physical-probe'])
 else:
     checks.update({'kept-build1':build=='1','never-relaunched-new':not new,
+      'old-process-still-running':len(old)==1 and end_observation['pidsAlive'].get(str(old[0]['pid']),False),
       'never-authorized-install':not any(r.get('authorized') for r in events),'no-termination-commit':'termination-gate' not in seen})
     if case=='cancel':checks['cancelled-after-data']=('cancel-requested' in seen and any(r['event']=='updater-state' and r.get('status')==2 and r.get('progress',-1)>0 for r in events))
     elif case=='gate-veto':checks['explicit-veto']=('gate-veto' in seen and any(r['domain']=='fixture.workspace-busy' for r in errors))

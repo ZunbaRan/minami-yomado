@@ -12,6 +12,11 @@ typedef NS_ENUM(NSInteger, YMUpdateOwnedWindowRelation) {
 /// Pure geometry classification; crossing any owned boundary is unsafe even
 /// when most of the window remains on a physical display.
 FOUNDATION_EXPORT YMUpdateOwnedWindowRelation YMUpdateWindowRelationToOwnedDisplays(NSDictionary *frame, NSArray<NSDictionary *> *displays);
+/// Pure, conservative classification of a system menu surface or its hidden
+/// backing copies. Evidence is collected afresh by the native backend, never
+/// persisted. Ordinary AX windows always take precedence over this exclusion.
+FOUNDATION_EXPORT BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary * _Nullable ownerAX);
 /// Exact native identity/lookup helpers used only for in-memory workspace
 /// checkpoint handoff. No titles, paths, permissions prompts or activation.
 FOUNDATION_EXPORT NSDictionary * _Nullable YMUpdateIdentityForWindowElement(id element);

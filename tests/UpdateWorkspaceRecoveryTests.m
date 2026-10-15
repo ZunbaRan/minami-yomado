@@ -268,4 +268,66 @@ static void CancellationOwnership(void) {
         Check([source cancelPreparedRestart:&e],@"later source transaction acquires cancellation ownership");Cleanup(dir);
     }
 }
-int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }
+static void MenuChromeClassification(void) {
+    NSDictionary *display=Frame(1024,0,1280,800), *band=Frame(1024,0,1280,30);
+    NSDictionary *system=@{@"pid":@160,@"windowID":@107,@"frame":band,@"layer":@24,
+        @"onscreen":@YES,@"trustedWindowServer":@YES};
+    NSDictionary *candidate=@{@"pid":@400,@"windowID":@125,@"frame":band,@"layer":@0,@"onscreen":@NO};
+    NSDictionary *ordinary=@{@"role":@"AXWindow",@"windowID":@91,@"frame":Frame(1124,120,460,312),
+        @"safe":@YES,@"hasDialog":@NO};
+    NSDictionary *owner=@{@"pid":@400,@"bundleID":@"test.fixture",@"menuRole":@"AXMenuBar",@"windows":@[ordinary]};
+    Check(YMUpdateIsVerifiedMenuChrome(system,display,31,24,system,nil),@"exact trusted system menu surface is non-document chrome");
+    for (NSNumber *ID in @[@118,@119,@120,@125]) {
+        NSMutableDictionary *copy=candidate.mutableCopy;copy[@"windowID"]=ID;
+        Check(YMUpdateIsVerifiedMenuChrome(copy,display,31,24,system,owner),@"observed duplicate hidden menu backings do not require nonexistent AX menu CG IDs");
+    }
+    NSMutableDictionary *copyOwner=owner.mutableCopy;copyOwner[@"menuFrame"]=band;
+    Check(YMUpdateIsVerifiedMenuChrome(candidate,display,31,24,system,copyOwner),@"available exact AX menu geometry corroborates the exclusion");
+    copyOwner=owner.mutableCopy;copyOwner[@"windows"]=@[];
+    Check(YMUpdateIsVerifiedMenuChrome(candidate,display,31,24,system,copyOwner),@"app with no document windows can still own a menu backing");
+    NSDictionary *desktop=@{@"role":@"AXScrollArea",@"windowID":@0,@"hasDialog":@NO};
+    copyOwner=owner.mutableCopy;copyOwner[@"bundleID"]=@"com.apple.finder";copyOwner[@"windows"]=@[desktop];
+    Check(YMUpdateIsVerifiedMenuChrome(candidate,display,31,24,system,copyOwner),@"Finder desktop AXScrollArea is not an unknown document window");
+    for (NSUInteger scenario=0;scenario<29;scenario++) {
+        NSMutableDictionary *c=candidate.mutableCopy,*s=system.mutableCopy,*o=owner.mutableCopy;
+        NSMutableDictionary *w=ordinary.mutableCopy;NSDictionary *d=display;double inset=31;NSInteger level=24;
+        switch (scenario) {
+            case 0:c[@"onscreen"]=@YES;break;
+            case 1:c[@"layer"]=@1;break;
+            case 2:c[@"frame"]=Frame(1024,0,1100,30);break;
+            case 3:c[@"frame"]=Frame(1024,5,1280,30);break;
+            case 4:c[@"frame"]=Frame(1024,0,1280,60);break;
+            case 5:s[@"trustedWindowServer"]=@NO;break;
+            case 6:s[@"onscreen"]=@NO;break;
+            case 7:s[@"layer"]=@25;break;
+            case 8:s[@"frame"]=Frame(1024,3,1280,30);break;
+            case 9:inset=0;break;
+            case 10:inset=NAN;break;
+            case 11:inset=300;break;
+            case 12:d=Frame(0,0,1280,800);break;
+            case 13:o[@"menuRole"]=@"AXWindow";break;
+            case 14:o[@"windows"]=NSNull.null;break;
+            case 15:o[@"pid"]=@401;break;
+            case 16:o[@"menuFrame"]=Frame(1024,40,1280,30);break;
+            case 17:o[@"menuFrame"]=@{};break;
+            case 18:w[@"windowID"]=candidate[@"windowID"];o[@"windows"]=@[w];break;
+            case 19:w[@"frame"]=band;o[@"windows"]=@[w];break;
+            case 20:w[@"windowID"]=@0;o[@"windows"]=@[w];break;
+            case 21:w[@"safe"]=@NO;o[@"windows"]=@[w];break;
+            case 22:w[@"hasDialog"]=@YES;o[@"windows"]=@[w];break;
+            case 23:[w removeObjectForKey:@"frame"];o[@"windows"]=@[w];break;
+            case 24:o[@"windows"]=@[desktop];break;
+            case 25:w=desktop.mutableCopy;w[@"windowID"]=@91;o[@"bundleID"]=@"com.apple.finder";o[@"windows"]=@[w];break;
+            case 26:c[@"windowID"]=@0;break;
+            case 27:s[@"pid"]=@0;break;
+            case 28:level=25;break;
+        }
+        Check(!YMUpdateIsVerifiedMenuChrome(c,d,inset,level,s,o),@"incomplete menu evidence or a real/unknown window keeps the update blocked");
+    }
+    Check(!YMUpdateIsVerifiedMenuChrome(candidate,display,31,24,system,nil),@"failed AX owner enumeration cannot exclude a hidden surface");
+    copyOwner=owner.mutableCopy;copyOwner[@"windows"]=@[NSNull.null];
+    Check(!YMUpdateIsVerifiedMenuChrome(candidate,display,31,24,system,copyOwner),@"malformed AX inventory fails closed");
+    NSMutableDictionary *untrusted=system.mutableCopy;untrusted[@"trustedWindowServer"]=@NO;
+    Check(!YMUpdateIsVerifiedMenuChrome(untrusted,display,31,24,untrusted,nil),@"a menu-like process name or level alone is insufficient");
+}
+int main(void) { @autoreleasepool { MainRoundtrip();FinalGateChanges();StartupAndRestoreGates();RetryAndPrivacy();EmptyAndPartial();GeometryAndOriginSelection();MalformedShapes();LastMomentGuards();CancellationOwnership();MenuChromeClassification();printf("UpdateWorkspaceRecovery: %lu checks passed\n",(unsigned long)checks); } return 0; }

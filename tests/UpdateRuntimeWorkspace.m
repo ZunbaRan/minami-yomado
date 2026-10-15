@@ -48,10 +48,19 @@ static NSDictionary *FAXElementDiagnostic(id element) {
     typedef AXError (*WindowIDFunction)(AXUIElementRef,CGWindowID *);
     WindowIDFunction function=(WindowIDFunction)dlsym(RTLD_DEFAULT,"_AXUIElementGetWindow");
     CGWindowID ID=0; AXError idStatus=function ? function(ref,&ID) : kAXErrorNotImplemented;
-    AXError roleStatus,subroleStatus;
+    AXError roleStatus,subroleStatus,positionStatus,sizeStatus;
     id role=FAXRead(ref,kAXRoleAttribute,&roleStatus),subrole=FAXRead(ref,kAXSubroleAttribute,&subroleStatus);
+    id position=FAXRead(ref,kAXPositionAttribute,&positionStatus),size=FAXRead(ref,kAXSizeAttribute,&sizeStatus);
+    CGPoint point=CGPointZero; CGSize dimensions=CGSizeZero; NSDictionary *frame=@{};
+    if (position && size && CFGetTypeID((__bridge CFTypeRef)position)==AXValueGetTypeID() &&
+        CFGetTypeID((__bridge CFTypeRef)size)==AXValueGetTypeID() &&
+        AXValueGetValue((__bridge AXValueRef)position,kAXValueCGPointType,&point) &&
+        AXValueGetValue((__bridge AXValueRef)size,kAXValueCGSizeType,&dimensions) &&
+        isfinite(point.x) && isfinite(point.y) && isfinite(dimensions.width) && isfinite(dimensions.height))
+        frame=@{@"x":@(point.x),@"y":@(point.y),@"width":@(dimensions.width),@"height":@(dimensions.height)};
     return @{@"windowID":@(ID),@"windowIDStatus":@(idStatus),@"role":role ?: @"",@"roleStatus":@(roleStatus),
-        @"subrole":subrole ?: @"",@"subroleStatus":@(subroleStatus)};
+        @"subrole":subrole ?: @"",@"subroleStatus":@(subroleStatus),
+        @"frame":frame,@"positionStatus":@(positionStatus),@"sizeStatus":@(sizeStatus)};
 }
 static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
     AXUIElementRef application=AXUIElementCreateApplication(pid);
@@ -143,8 +152,8 @@ static NSDictionary *FAXApplicationDiagnostic(pid_t pid) {
     NSDictionary *after=[self.backend captureWithProfiles:self.profiles error:&captureError];
     NSDictionary *workAfter=[self.backend readWindow:workIdentity error:&workError];
     NSDictionary *probeAfter=[self.backend readWindow:probe[@"identity"] error:&probeError];
-    if (captureError.code==13 && [captureError.domain isEqual:@"dev.chekusu.yomado.update-workspace"] &&
-        (!self.loggedSurfaceInventory || NSProcessInfo.processInfo.systemUptime>=deadline)) {
+    if (!self.loggedSurfaceInventory || (captureError.code==13 &&
+        [captureError.domain isEqual:@"dev.chekusu.yomado.update-workspace"] && NSProcessInfo.processInfo.systemUptime>=deadline)) {
         self.loggedSurfaceInventory=YES;
         CGRect owned=CGDisplayBounds(self.display.displayID);
         NSMutableArray *candidates=[NSMutableArray array];

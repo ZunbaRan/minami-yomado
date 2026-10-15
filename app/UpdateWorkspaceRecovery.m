@@ -114,6 +114,86 @@ static BOOL UWindowSafe(id element) {
     return UFrame(element) && AXUIElementIsAttributeSettable((__bridge AXUIElementRef)element,
         kAXPositionAttribute, &settable) == kAXErrorSuccess && settable;
 }
+BOOL YMUpdateIsVerifiedMenuChrome(NSDictionary *candidate, NSDictionary *displayBounds,
+    double topInset, NSInteger mainMenuLevel, NSDictionary *systemMenu, NSDictionary *ownerAX) {
+    if (![candidate isKindOfClass:NSDictionary.class] || ![systemMenu isKindOfClass:NSDictionary.class] ||
+        !YMWorkspaceGeometry(displayBounds) || !YMWorkspaceGeometry(candidate[@"frame"]) ||
+        !YMWorkspaceGeometry(systemMenu[@"frame"]) || !isfinite(topInset) || topInset <= 1 ||
+        topInset >= [displayBounds[@"height"] doubleValue] / 4 || mainMenuLevel <= 0 ||
+        ![systemMenu[@"trustedWindowServer"] isEqual:@YES] || ![systemMenu[@"onscreen"] isEqual:@YES] ||
+        ![systemMenu[@"layer"] isEqual:@(mainMenuLevel)] ||
+        !UInteger(systemMenu[@"pid"],1,INT_MAX) || !UInteger(systemMenu[@"windowID"],1,UINT32_MAX) ||
+        !UInteger(candidate[@"pid"],1,INT_MAX) || !UInteger(candidate[@"windowID"],1,UINT32_MAX)) return NO;
+    NSDictionary *band=@{@"x":displayBounds[@"x"],@"y":displayBounds[@"y"],
+        @"width":displayBounds[@"width"],@"height":@(topInset)};
+    // AppKit reserves an additional edge pixel on some systems (31 vs 30).
+    // Use the actual full-width system surface, with only rounding tolerance.
+    if (!USameFrame(systemMenu[@"frame"],band) || !USameFrame(candidate[@"frame"],systemMenu[@"frame"])) return NO;
+    if ([candidate[@"pid"] isEqual:systemMenu[@"pid"]] &&
+        [candidate[@"windowID"] isEqual:systemMenu[@"windowID"]])
+        return [candidate[@"onscreen"] isEqual:@YES] && [candidate[@"layer"] isEqual:@(mainMenuLevel)];
+    if (![candidate[@"onscreen"] isEqual:@NO] || ![candidate[@"layer"] isEqual:@0] ||
+        ![ownerAX isKindOfClass:NSDictionary.class] || ![ownerAX[@"pid"] isEqual:candidate[@"pid"]] ||
+        ![ownerAX[@"menuRole"] isEqual:(__bridge NSString *)kAXMenuBarRole] ||
+        ![ownerAX[@"windows"] isKindOfClass:NSArray.class]) return NO;
+    // AXMenuBar is not an AXWindow and may have no CG ID or geometry. If it
+    // does expose a frame, it must corroborate this display's menu surface.
+    if (ownerAX[@"menuFrame"] && !USameFrame(ownerAX[@"menuFrame"],systemMenu[@"frame"])) return NO;
+    for (id window in ownerAX[@"windows"]) {
+        if (![window isKindOfClass:NSDictionary.class]) return NO;
+        if ([ownerAX[@"bundleID"] isEqual:@"com.apple.finder"] &&
+            [window[@"role"] isEqual:(__bridge NSString *)kAXScrollAreaRole] &&
+            [window[@"windowID"] isEqual:@0] && [window[@"hasDialog"] isEqual:@NO]) continue;
+        if (![window[@"role"] isEqual:(__bridge NSString *)kAXWindowRole] ||
+            ![window[@"safe"] isEqual:@YES] || ![window[@"hasDialog"] isEqual:@NO] ||
+            !UInteger(window[@"windowID"],1,UINT32_MAX) || !YMWorkspaceGeometry(window[@"frame"]) ||
+            [window[@"windowID"] isEqual:candidate[@"windowID"]] ||
+            USameFrame(window[@"frame"],candidate[@"frame"])) return NO;
+    }
+    return YES;
+}
+static NSDictionary *UMenuOwnerSnapshot(pid_t pid) {
+    NSDictionary *identity=UProcess(pid); if (!identity || !AXIsProcessTrusted()) return nil;
+    AXUIElementRef application=AXUIElementCreateApplication(pid);
+    AXUIElementSetMessagingTimeout(application,.8);
+    id app=CFBridgingRelease(application), windows=URead(app,kAXWindowsAttribute), menu=URead(app,kAXMenuBarAttribute);
+    if (![windows isKindOfClass:NSArray.class] || ![URead(menu,kAXRoleAttribute) isEqual:(__bridge NSString *)kAXMenuBarRole]) return nil;
+    NSMutableArray *items=[NSMutableArray array];
+    for (id window in windows) {
+        id role=URead(window,kAXRoleAttribute); if (![role isKindOfClass:NSString.class]) return nil;
+        NSMutableDictionary *item=[@{@"role":role,@"windowID":@(UWindowID(window)),
+            @"safe":@(UWindowSafe(window)),@"hasDialog":@(UHasDialog(window))} mutableCopy];
+        NSDictionary *frame=UFrame(window); if (frame) item[@"frame"]=frame;
+        [items addObject:item.copy];
+    }
+    if (![identity isEqual:UProcess(pid)]) return nil;
+    NSMutableDictionary *result=[@{@"pid":@(pid),@"bundleID":identity[@"bundleID"],
+        @"menuRole":(__bridge NSString *)kAXMenuBarRole,@"windows":items.copy} mutableCopy];
+    NSDictionary *frame=UFrame(menu); if (frame) result[@"menuFrame"]=frame;
+    return result.copy;
+}
+static BOOL UIsSystemWindowServer(pid_t pid) {
+    char path[PROC_PIDPATHINFO_MAXSIZE]={0};
+    return proc_pidpath(pid,path,sizeof(path))>0 &&
+        strcmp(path,"/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/Resources/WindowServer")==0;
+}
+static NSDictionary *UMenuScreenInsets(NSArray *owned) {
+    NSMutableDictionary *result=[NSMutableDictionary dictionary];
+    double primaryHeight=CGDisplayBounds(CGMainDisplayID()).size.height;
+    for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *ID=screen.deviceDescription[@"NSScreenNumber"];
+        for (NSDictionary *display in owned) {
+            if (![display[@"displayID"] isEqual:ID]) continue;
+            NSRect frame=screen.frame, visible=screen.visibleFrame;
+            NSDictionary *converted=@{@"x":@(frame.origin.x),@"y":@(primaryHeight-NSMaxY(frame)),
+                @"width":@(frame.size.width),@"height":@(frame.size.height)};
+            double inset=NSMaxY(frame)-NSMaxY(visible);
+            if (USameFrame(converted,display[@"bounds"]) && NSContainsRect(frame,visible) && isfinite(inset) && inset>1)
+                result[ID]=@(inset);
+        }
+    }
+    return result.copy;
+}
 id YMUpdateResolveWindowIdentity(NSDictionary *identity, NSError **error) {
     if (!UIdentityValid(identity) || !AXIsProcessTrusted()) {
         UFail(error, 1, @"Window control permission or exact window identity is unavailable."); return nil;
@@ -145,10 +225,8 @@ id YMUpdateResolveWindowIdentity(NSDictionary *identity, NSError **error) {
     }
     return match;
 }
-static NSDictionary *UCGWindow(CGWindowID ID) {
-    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, ID));
-    if (windows.count != 1) return nil;
-    NSDictionary *raw = windows.firstObject; CGRect rect;
+static NSDictionary *UCGWindowMetadata(NSDictionary *raw) {
+    CGRect rect;
     if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)raw[(__bridge NSString *)kCGWindowBounds], &rect)) return nil;
     NSDictionary *frame = YMWorkspaceGeometry(@{@"x":@(rect.origin.x),@"y":@(rect.origin.y),
         @"width":@(rect.size.width),@"height":@(rect.size.height)});
@@ -156,6 +234,10 @@ static NSDictionary *UCGWindow(CGWindowID ID) {
     return @{@"windowID":raw[(__bridge NSString *)kCGWindowNumber], @"pid":raw[(__bridge NSString *)kCGWindowOwnerPID],
              @"frame":frame, @"onscreen":raw[(__bridge NSString *)kCGWindowIsOnscreen] ?: @NO,
              @"layer":raw[(__bridge NSString *)kCGWindowLayer] ?: @0};
+}
+static NSDictionary *UCGWindow(CGWindowID ID) {
+    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, ID));
+    return windows.count==1 ? UCGWindowMetadata(windows.firstObject) : nil;
 }
 static NSArray *UDisplays(NSError **error) {
     CGDirectDisplayID ids[256]; uint32_t count = 0;
@@ -215,6 +297,23 @@ static NSArray *UDisplays(NSError **error) {
     if (!owned.count) return @{@"displays":displays, @"windows":@[]};
     NSArray *raw = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, 0));
     if (!raw) { UFail(error, 12, @"The complete window inventory is unavailable."); return nil; }
+    NSDictionary *menuInsets=UMenuScreenInsets(owned);
+    NSInteger menuLevel=CGWindowLevelForKey(kCGMainMenuWindowLevelKey);
+    NSMutableDictionary<NSNumber *,NSMutableArray *> *systemMenus=[NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *,id> *menuOwners=[NSMutableDictionary dictionary];
+    for (NSDictionary *entry in raw) {
+        if ([entry[(__bridge NSString *)kCGWindowLayer] integerValue]!=menuLevel ||
+            ![entry[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] ||
+            !UIsSystemWindowServer([entry[(__bridge NSString *)kCGWindowOwnerPID] intValue])) continue;
+        NSMutableDictionary *menu=[UCGWindowMetadata(entry) mutableCopy]; if (!menu) continue;
+        menu[@"trustedWindowServer"]=@YES;
+        for (NSDictionary *display in owned) {
+            NSNumber *ID=display[@"displayID"];
+            if (!YMUpdateIsVerifiedMenuChrome(menu,display[@"bounds"],[menuInsets[ID] doubleValue],menuLevel,menu,nil)) continue;
+            if (!systemMenus[ID]) systemMenus[ID]=[NSMutableArray array];
+            [systemMenus[ID] addObject:menu.copy];
+        }
+    }
     NSMutableArray *windows = [NSMutableArray array];
     for (NSDictionary *entry in raw) {
         CGRect rect;
@@ -238,6 +337,19 @@ static NSArray *UDisplays(NSError **error) {
         }
         NSDictionary *owner=nil;
         for (NSDictionary *display in owned) if (YMWorkspaceIntersection(frame,display[@"bounds"])>0) owner=display;
+        BOOL menuChrome=NO;
+        for (NSDictionary *menu in systemMenus[owner[@"displayID"]]) {
+            if (!USameFrame(frame,menu[@"frame"])) continue;
+            NSDictionary *candidate=UCGWindowMetadata(entry), *ownerAX=nil;
+            if ([candidate[@"layer"] isEqual:@0] && [candidate[@"onscreen"] isEqual:@NO]) {
+                NSNumber *PID=@(pid);
+                if (!menuOwners[PID]) menuOwners[PID]=UMenuOwnerSnapshot(pid) ?: NSNull.null;
+                if ([menuOwners[PID] isKindOfClass:NSDictionary.class]) ownerAX=menuOwners[PID];
+            }
+            if (YMUpdateIsVerifiedMenuChrome(candidate,owner[@"bounds"],
+                [menuInsets[owner[@"displayID"]] doubleValue],menuLevel,menu,ownerAX)) { menuChrome=YES; break; }
+        }
+        if (menuChrome) continue;
         if (!bundle || [entry[(__bridge NSString *)kCGWindowLayer] integerValue] != 0 ||
             ![entry[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] ||
             YMWorkspaceIntersection(frame, owner[@"bounds"]) < rect.size.width * rect.size.height - 1) {
