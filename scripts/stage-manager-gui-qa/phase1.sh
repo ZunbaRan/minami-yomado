@@ -125,7 +125,84 @@ if [[ -z "$ym_qa_yomado_pid" ]]; then
   printf '%s\n' 'LaunchServices did not produce an identifiable Yomado process.' >&2
   exit 1
 fi
-sleep 4
+python3 - "$ym_qa_helpers/observe" "$ym_qa_yomado_pid" "$ym_qa_evidence" <<'PY'
+import json, math, pathlib, subprocess, sys, time
+
+observer, expected_pid, evidence = sys.argv[1], int(sys.argv[2]), pathlib.Path(sys.argv[3])
+
+def ready_state(data, expected_pid):
+    reasons = []
+    products = [a for a in data.get('applications', []) if a.get('bundleIdentifier') == 'dev.chekusu.yomado']
+    product = products[0] if len(products) == 1 else {}
+    if len(products) != 1 or product.get('pid') != expected_pid:
+        reasons.append('owned process identity unavailable')
+    if product.get('activationPolicy') != 0 or product.get('terminated') is not False:
+        reasons.append('owned process is not live Regular')
+    panels = [w for w in product.get('cgWindows', [])
+              if w.get('kCGWindowName') == 'yomado' and w.get('kCGWindowLayer') == 0]
+    panel = panels[0] if len(panels) == 1 else {}
+    box = panel.get('kCGWindowBounds', {})
+    geometry = [box.get(k) for k in ['X', 'Y', 'Width', 'Height']]
+    valid_geometry = all(isinstance(v, (int, float)) and math.isfinite(v) for v in geometry)
+    if (len(panels) != 1 or panel.get('kCGWindowIsOnscreen') is not True
+            or not valid_geometry or box.get('Width', 0) < 600 or box.get('Height', 0) <= 0):
+        reasons.append('normal-size onscreen product panel not ready')
+    ax = [w for w in product.get('axWindows', [])
+          if w.get('AXRole') == 'AXWindow' and w.get('AXTitle') == 'yomado'
+          and w.get('AXMinimized') is False]
+    ax_geometry = (ax[0].get('AXPosition', []) + ax[0].get('AXSize', [])) if len(ax) == 1 else []
+    if (not valid_geometry or len(ax_geometry) != 4
+            or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in ax_geometry)
+            or any(abs(a-b) > 1 for a,b in zip(geometry, ax_geometry))):
+        reasons.append('corresponding AXWindow geometry not ready')
+    dock = data.get('dock', {})
+    if (dock.get('dockReadable') is not True or dock.get('walkComplete') is not True
+            or dock.get('regularCompanionPositiveControl') is not True
+            or dock.get('yomadoIconObservation') != 'present'
+            or not any(i.get('matchesRunningBundleURL') is True for i in dock.get('yomadoItems', []))):
+        reasons.append('reliable matching product Dock item not ready')
+    # A CLI LaunchServices cold start is not required to take app focus.
+    return {'ready': not reasons, 'reasons': reasons, 'panelWindowID': panel.get('kCGWindowNumber')}
+
+start = time.monotonic()
+deadline = start + 10
+samples = []
+original_window_id = None
+passed = False
+while time.monotonic() < deadline:
+    label = f'02-cold-start-wait-{len(samples):03d}'
+    entry = {'label': label, 'startElapsedSeconds': time.monotonic() - start}
+    try:
+        result = subprocess.run([observer], capture_output=True, text=True,
+                                timeout=max(.05, min(3, deadline-time.monotonic())), check=True)
+        (evidence / (label + '.json')).write_text(result.stdout)
+        if result.stderr:
+            (evidence / (label + '.stderr')).write_text(result.stderr)
+        data = json.loads(result.stdout)
+        status = ready_state(data, expected_pid)
+        window_id = status['panelWindowID']
+        if original_window_id is None and isinstance(window_id, int):
+            original_window_id = window_id
+        if window_id is not None and window_id != original_window_id:
+            status['ready'] = False
+            status['reasons'].append('original cold-start panel identity changed')
+        entry.update(status)
+        entry['sampleUptimeSeconds'] = data.get('monotonicUptimeSeconds')
+    except (subprocess.SubprocessError, ValueError) as error:
+        entry.update({'ready': False, 'observationError': str(error)})
+    entry['endElapsedSeconds'] = time.monotonic() - start
+    samples.append(entry)
+    if entry.get('ready') and time.monotonic() <= deadline:
+        passed = True
+        break
+    time.sleep(min(.15, max(0, deadline-time.monotonic())))
+report = {'passed': passed, 'maximumWaitSeconds': 10, 'elapsedSeconds': time.monotonic() - start,
+          'ownedPID': expected_pid, 'originalPanelWindowID': original_window_id,
+          'focusRequirement': 'none for CLI cold start', 'samples': samples}
+(evidence / '02-cold-start-readiness.json').write_text(json.dumps(report, indent=2) + '\n')
+if not passed:
+    raise SystemExit('Cold-start panel did not reach complete observable state within 10 seconds')
+PY
 kill -0 "$ym_qa_yomado_pid"
 ym_qa_capture 02-yomado-first-open 0
 

@@ -1,4 +1,4 @@
-name: PR 6 isolated lifecycle diagnostics
+name: PR 6 isolated GUI acceptance
 on:
   push:
     branches: [qa/pr-6-gui-acceptance-20261015]
@@ -16,10 +16,10 @@ jobs:
       matrix:
         include:
           - variant: regular-default-spaces
-            revision: f7c12f798cfe15101cb6b6003c5b7e9ea6402995
+            revision: 5eda5830b82277e0decf25b61f23dc3dea967bea
             space-switching: default
           - variant: regular-no-auto-spaces
-            revision: f7c12f798cfe15101cb6b6003c5b7e9ea6402995
+            revision: 5eda5830b82277e0decf25b61f23dc3dea967bea
             space-switching: off
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -42,9 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/stage-manager-gui-qa/trace-panel-defer.py production
-          git -C production diff > test-output/gui-qa/diagnostic-only.patch
-          printf '%s\n' 'DIAGNOSTIC BUILD; NOT PRODUCTION ACCEPTANCE' > test-output/gui-qa/diagnostic-only.txt
+          git -C production diff --exit-code
           env -u YOMADO_SIGNING_IDENTITY bash production/build.sh
           shasum -a 256 production/dist/Yomado.app/Contents/MacOS/Yomado > test-output/gui-qa/tested-binary.sha256
           bash scripts/stage-manager-gui-qa/build-helpers.sh "$RUNNER_TEMP/yomado-gui-helpers"

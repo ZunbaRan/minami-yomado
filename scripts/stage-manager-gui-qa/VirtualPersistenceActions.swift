@@ -63,6 +63,36 @@ func axBounds(_ node: AXUIElement) -> CGRect? {
           AXValueGetValue(s as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return nil }
     return CGRect(origin: position, size: size)
 }
+func ancestors(_ node: AXUIElement) -> [AXUIElement] {
+    var current = node, result: [AXUIElement] = []
+    for _ in 0..<24 {
+        guard let value = attr(current, kAXParentAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return result }
+        let parent = value as! AXUIElement
+        guard !CFEqual(parent, node), !result.contains(where: { CFEqual($0, parent) }) else { fail("AX parent cycle") }
+        result.append(parent)
+        if label(parent, kAXRoleAttribute) == kAXApplicationRole { return result }
+        current = parent
+    }
+    fail("AX parent traversal bound exceeded")
+}
+func clippingEvidence(_ node: AXUIElement) -> [[String: Any]] {
+    ancestors(node).filter { [kAXScrollAreaRole, kAXWindowRole].contains(label($0, kAXRoleAttribute)) }.map {
+        ["role": label($0, kAXRoleAttribute), "bounds": axBounds($0).map(rect) ?? []]
+    }
+}
+func fullyVisible(_ node: AXUIElement) -> Bool {
+    guard let frame = axBounds(node), CGDisplayBounds(CGMainDisplayID()).contains(frame),
+          (attr(node, "AXHidden") as? NSNumber)?.boolValue != true else { return false }
+    for ancestor in ancestors(node) {
+        if (attr(ancestor, "AXHidden") as? NSNumber)?.boolValue == true { return false }
+        let role = label(ancestor, kAXRoleAttribute)
+        if role == kAXWindowRole && (attr(ancestor, kAXMinimizedAttribute) as? NSNumber)?.boolValue == true { return false }
+        if role == kAXScrollAreaRole || role == kAXWindowRole {
+            guard let clip = axBounds(ancestor), clip.contains(frame) else { return false }
+        }
+    }
+    return true
+}
 func ownedApp(_ pid: pid_t, _ bundle: String) -> NSRunningApplication {
     guard let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == bundle, !app.isTerminated else {
         fail("owned process identity unavailable")
@@ -81,12 +111,12 @@ func windows(_ pid: pid_t) -> [[String: Any]] {
                 "title": row[kCGWindowName as String] ?? ""]
     }
 }
-func select(_ root: AXUIElement, _ command: String) -> AXUIElement? {
+func select(_ root: AXUIElement, _ command: String, requireVisible: Bool = true) -> AXUIElement? {
     let matches = nodes(root).filter { node in
         let role = label(node, kAXRoleAttribute), title = label(node, kAXTitleAttribute)
         let descriptions = [title, label(node, kAXDescriptionAttribute), label(node, kAXHelpAttribute)]
         guard (attr(node, kAXEnabledAttribute) as? NSNumber)?.boolValue == true,
-              let frame = axBounds(node), CGDisplayBounds(CGMainDisplayID()).contains(frame) else { return false }
+              axBounds(node) != nil, !requireVisible || fullyVisible(node) else { return false }
         switch command {
         case "add-menu": return role == kAXButtonRole && descriptions.contains(where: {
             $0 == "添加虚拟屏" || $0 == "添加或启动虚拟屏"
@@ -105,6 +135,32 @@ func action(_ pid: pid_t, _ command: String) {
     _ = ownedApp(pid, "dev.chekusu.yomado")
     guard AXIsProcessTrusted() else { fail("Accessibility permission unavailable") }
     let root = AXUIElementCreateApplication(pid)
+    var adjustments: [[String: Any]] = []
+    if command == "manage-menu", let clipped = select(root, command, requireVisible: false), !fullyVisible(clipped) {
+        // A small hosted desktop can clip the card's bottom toolbar behind
+        // the panel footer. Enlarge only this owned, ordinary product panel;
+        // never click coordinates that are outside an ancestor's viewport.
+        guard let panel = ancestors(clipped).first(where: { label($0, kAXRoleAttribute) == kAXWindowRole }),
+              label(panel, kAXTitleAttribute) == "yomado", let oldFrame = axBounds(panel),
+              CGDisplayBounds(CGMainDisplayID()).contains(oldFrame) else { fail("clipped control has no safely resizable owned panel") }
+        var owner: pid_t = 0, settable = DarwinBoolean(false)
+        guard AXUIElementGetPid(panel, &owner) == .success, owner == pid,
+              AXUIElementIsAttributeSettable(panel, kAXSizeAttribute as CFString, &settable) == .success,
+              settable.boolValue else { fail("owned panel size is not settable") }
+        let availableHeight = CGDisplayBounds(CGMainDisplayID()).maxY - oldFrame.minY - 16
+        var requested = CGSize(width: oldFrame.width, height: min(oldFrame.height + 160, availableHeight))
+        guard requested.height > oldFrame.height + 1, let size = AXValueCreate(.cgSize, &requested) else {
+            fail("insufficient on-screen space to reveal card control")
+        }
+        let before = clippingEvidence(clipped)
+        let beforeControl = axBounds(clipped).map(rect) ?? []
+        let outcome = AXUIElementSetAttributeValue(panel, kAXSizeAttribute as CFString, size)
+        adjustments.append(["kind": "resize-owned-product-panel", "oldBounds": rect(oldFrame),
+                            "requestedSize": [requested.width, requested.height],
+                            "beforeControlBounds": beforeControl, "beforeAncestorClips": before,
+                            "AXResult": outcome.rawValue])
+        guard outcome == .success else { emit(["adjustments": adjustments]); fail("owned panel resize was refused") }
+    }
     var selected: AXUIElement?
     for _ in 0..<45 {
         selected = select(root, command)
@@ -114,8 +170,9 @@ func action(_ pid: pid_t, _ command: String) {
     guard selected != nil, let current = select(root, command), let frame = axBounds(current) else {
         emit(["unavailableCommand": command, "ax": nodes(root).map {
             ["role": label($0, kAXRoleAttribute), "title": label($0, kAXTitleAttribute),
-             "description": label($0, kAXDescriptionAttribute), "bounds": axBounds($0).map(rect) ?? []] as [String: Any]
-        }]); fail("expected visible control not found")
+             "description": label($0, kAXDescriptionAttribute), "bounds": axBounds($0).map(rect) ?? [],
+             "ancestorClips": clippingEvidence($0)] as [String: Any]
+        }, "adjustments": adjustments]); fail("expected visible control not found")
     }
     let point = CGPoint(x: frame.midX, y: frame.midY)
     for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
@@ -125,7 +182,9 @@ func action(_ pid: pid_t, _ command: String) {
         event.setIntegerValueField(.mouseEventClickState, value: 1)
         event.post(tap: .cghidEventTap); Thread.sleep(forTimeInterval: 0.1)
     }
-    emit(["command": command, "pid": pid, "point": [point.x, point.y], "result": "sent; result requires observation"])
+    emit(["command": command, "pid": pid, "point": [point.x, point.y],
+          "controlBounds": rect(frame), "ancestorClips": clippingEvidence(current),
+          "adjustments": adjustments, "result": "sent; result requires observation"])
 }
 func waitFor<T>(_ operation: (@escaping (T?, Error?) -> Void) -> Void) -> T {
     var done = false, result: T?, error: Error?

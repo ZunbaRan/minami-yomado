@@ -137,7 +137,11 @@ try:
         prefix = f'cycle-{cycle:02d}'
         current_step = prefix+' minimize'
         call([helpers/'panel-window-actions', product_pid, 'minimize'], prefix+'-minimize')
-        time.sleep(.4)
+        for attempt in range(6):
+            pending = sample(prefix+f'-minimize-wait-{attempt:02d}')
+            if any(w.get('AXMinimized') is True for w in ax_panels(pending)):
+                break
+            time.sleep(.2)
         minimized = sample(prefix+'-minimized', screenshot=True)
         note(prefix+' actually minimized', any(w.get('AXMinimized') is True for w in ax_panels(minimized)))
         current_step = prefix+' restore'
