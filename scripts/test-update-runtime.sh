@@ -5,6 +5,12 @@ ym_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 ym_build_only=false
 if [ "${1:-}" = --build-only ]; then ym_build_only=true; shift; fi
 ym_evidence="${1:-$ym_root/test-output/update-runtime}"
+ym_cases=(update tampered-feed tampered-archive cancel gate-veto automatic occupied offline)
+case "${YM_UPDATE_RUNTIME_CASE:-all}" in
+  all) ;;
+  occupied) ym_cases=(occupied) ;;
+  *) printf 'Unknown runtime acceptance scenario.\n' >&2; exit 2 ;;
+esac
 if [ "$ym_build_only" = false ] && { [ "${GITHUB_ACTIONS:-}" != true ] || \
   [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ] || [ "${RUNNER_OS:-}" != macOS ] || [ "$(id -un)" != runner ]; }; then
   printf 'Refusing GUI/trust changes outside a disposable GitHub-hosted macOS runner. Use --build-only locally.\n' >&2
@@ -199,7 +205,7 @@ PYREADY
   fi
 
 ym_result=0
-for ym_case in update tampered-feed tampered-archive cancel gate-veto automatic occupied offline; do
+for ym_case in "${ym_cases[@]}"; do
   printf '[update-runtime] %s prepare\n' "$ym_case"
   ym_case_evidence="$ym_evidence/$ym_case"
   ym_case_root="$ym_temporary/$ym_case"

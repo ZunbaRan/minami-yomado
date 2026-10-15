@@ -46,6 +46,7 @@ static NSDictionary *FErrorDiagnostic(NSError *error) {
 @property(nonatomic, strong) YMDisplayTopology *topology;
 @property(nonatomic, strong) dispatch_queue_t queue;
 @property(nonatomic, copy) NSDictionary *baseline;
+@property(nonatomic) BOOL loggedSurfaceInventory;
 @end
 @implementation YMUpdateRuntimeWorkspace
 - (instancetype)initWithDirectory:(NSString *)directory workPID:(pid_t)workPID probePID:(pid_t)probePID
@@ -105,6 +106,31 @@ static NSDictionary *FErrorDiagnostic(NSError *error) {
     NSDictionary *after=[self.backend captureWithProfiles:self.profiles error:&captureError];
     NSDictionary *workAfter=[self.backend readWindow:workIdentity error:&workError];
     NSDictionary *probeAfter=[self.backend readWindow:probe[@"identity"] error:&probeError];
+    if (captureError.code==13 && [captureError.domain isEqual:@"dev.chekusu.yomado.update-workspace"] &&
+        (!self.loggedSurfaceInventory || NSProcessInfo.processInfo.systemUptime>=deadline)) {
+        self.loggedSurfaceInventory=YES;
+        CGRect owned=CGDisplayBounds(self.display.displayID);
+        NSMutableArray *candidates=[NSMutableArray array];
+        NSArray *raw=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll|kCGWindowListExcludeDesktopElements,0));
+        for (NSDictionary *entry in raw) {
+            CGRect frame;
+            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds],&frame) ||
+                CGRectIsEmpty(CGRectIntersection(frame,owned))) continue;
+            NSNumber *pid=entry[(__bridge NSString *)kCGWindowOwnerPID] ?: @0;
+            NSRunningApplication *app=[NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
+            [candidates addObject:@{@"pid":pid,@"windowID":entry[(__bridge NSString *)kCGWindowNumber] ?: @0,
+                @"bundleID":app.bundleIdentifier ?: @"",@"ownerName":entry[(__bridge NSString *)kCGWindowOwnerName] ?: @"",
+                @"layer":entry[(__bridge NSString *)kCGWindowLayer] ?: @0,
+                @"onScreen":entry[(__bridge NSString *)kCGWindowIsOnscreen] ?: @NO,
+                @"alpha":entry[(__bridge NSString *)kCGWindowAlpha] ?: @0,
+                @"frame":@{@"x":@(frame.origin.x),@"y":@(frame.origin.y),@"width":@(frame.size.width),@"height":@(frame.size.height)}}];
+        }
+        // Disposable guest diagnostics only. Do not read window titles or
+        // alter the production inventory classifier to admit these entries.
+        self.record(@"occupied-cg-inventory",@{@"displayID":@(self.display.displayID),
+            @"bounds":@{@"x":@(owned.origin.x),@"y":@(owned.origin.y),@"width":@(owned.size.width),@"height":@(owned.size.height)},
+            @"candidates":candidates});
+    }
     NSArray *windows=after[@"windows"] ?: @[];
     BOOL inventoryMatches=windows.count==1 && [windows[0][@"identity"] isEqual:workIdentity] &&
         FFrameEqual(windows[0][@"frame"],destination);
