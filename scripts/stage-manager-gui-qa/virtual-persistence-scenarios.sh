@@ -25,6 +25,7 @@ fixture_process = None
 monitor_stop = threading.Event()
 monitor_thread = None
 records, checks, actions = [], [], []
+policy_wait_count = 0
 started = time.monotonic()
 
 def write(name, value):
@@ -76,10 +77,52 @@ def panel_visible(state):
     return any(w.get('title') == 'yomado' and w.get('onscreen') for w in state['windows'])
 
 def wait_policy(policy, visible):
-    def ready():
-        s = panel_state()
-        return s if s['activationPolicy'] == policy and panel_visible(s) == visible else None
-    return wait_for(f'policy {policy}, panel visible={visible}', ready)
+    global policy_wait_count
+    policy_wait_count += 1
+    started_wait = time.monotonic()
+    deadline = started_wait + 15
+    stable_start = None
+    stable_count = 0
+    transition = {'productPID': product_pid, 'targetPolicy': policy,
+                  'targetPanelVisible': visible, 'timeoutSeconds': 15,
+                  'requiredStableSeconds': 1.2, 'minimumStableObservations': 3,
+                  'observer': 'fresh helper subprocess for every observation',
+                  'startedMonotonic': started_wait, 'observations': [],
+                  'resets': 0, 'passed': False}
+    try:
+        while time.monotonic() < deadline:
+            # Keep the entire transition bounded, including a slow observer.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            s = json.loads(run([helper, 'panel-state', product_pid], timeout=remaining).stdout)
+            observed = time.monotonic()
+            matches = s['activationPolicy'] == policy and panel_visible(s) == visible
+            transition['observations'].append({'observedMonotonic': observed,
+                                               'matches': matches, 'state': s})
+            if matches:
+                if stable_start is None:
+                    stable_start = observed
+                stable_count += 1
+                if observed < deadline and observed - stable_start >= 1.2 and stable_count >= 3:
+                    transition.update({'passed': True, 'stableStartMonotonic': stable_start,
+                                       'stableEndMonotonic': observed,
+                                       'stableDurationSeconds': observed - stable_start,
+                                       'stableObservations': stable_count})
+                    return s
+            else:
+                if stable_start is not None:
+                    transition['resets'] += 1
+                stable_start = None
+                stable_count = 0
+            time.sleep(max(0, min(.2, deadline - time.monotonic())))
+        raise AssertionError(f'timed out: policy {policy}, panel visible={visible}')
+    except BaseException as error:
+        transition['error'] = str(error)
+        raise
+    finally:
+        transition['elapsedSeconds'] = time.monotonic() - started_wait
+        write(f'policy-transition-{policy_wait_count:02d}.json', transition)
 
 def action(command):
     value = call(command, product_pid)
@@ -264,7 +307,18 @@ try:
         assert_sample(record, initial, baseline, virtual)
     for interval in intervals:
         subset = [r for r in records if interval['accessoryStart'] <= r['uptime'] <= interval['accessoryEnd']]
-        check(f"cycle {interval['cycle']}: continuous accessory observations", len(subset) >= 3 and all(r['activationPolicy'] == 1 for r in subset), len(subset))
+        check(f"cycle {interval['cycle']}: continuous accessory observations",
+              len(subset) >= 3 and all(r['activationPolicy'] == 1 and not any(
+                  w.get('id') == initial['productPanelWindowID'] and w.get('onscreen')
+                  for w in r['productWindows']) for r in subset), len(subset))
+        start_gap = subset[0]['uptime'] - interval['accessoryStart']
+        end_gap = interval['accessoryEnd'] - subset[-1]['uptime']
+        sample_gaps = [current['uptime'] - previous['uptime']
+                       for previous, current in zip(subset, subset[1:])]
+        check(f"cycle {interval['cycle']}: continuous observation covers the full hold",
+              0 <= start_gap <= 1 and 0 <= end_gap <= 1 and all(0 < gap <= 1 for gap in sample_gaps),
+              {'startGapSeconds': start_gap, 'endGapSeconds': end_gap,
+               'maxSampleGapSeconds': max(sample_gaps)})
     write('summary.json', {'passed': True, 'checks': checks, 'cycles': intervals, 'continuousSamples': len(records),
                           'elapsedSeconds': time.monotonic() - started,
                           'scope': 'unchanged production UI creation and panel lifecycle; actual virtual-display pixels and test fixture continuity',

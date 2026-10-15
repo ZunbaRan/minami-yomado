@@ -16,10 +16,10 @@ jobs:
       matrix:
         include:
           - variant: regular-default-spaces
-            revision: c790c2a3f951b04e75750ef6773d0779395eaed2
+            revision: cd4821aeedbe03f599ea1f7de78633c07d388d9f
             space-switching: default
           - variant: regular-no-auto-spaces
-            revision: c790c2a3f951b04e75750ef6773d0779395eaed2
+            revision: cd4821aeedbe03f599ea1f7de78633c07d388d9f
             space-switching: off
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
