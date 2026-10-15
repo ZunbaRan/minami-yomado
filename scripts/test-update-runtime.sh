@@ -96,7 +96,19 @@ ym_cleanup() {
     ym_bounded_guest_command remove-test-certificate 10 sudo -n security delete-certificate -c "$ym_ca_name" /Library/Keychains/System.keychain || true
   fi
   if [ -f "$ym_temporary/codesign/codesign.crt" ]; then
-    ym_bounded_guest_command remove-fixture-code-trust 10 security remove-trusted-cert "$ym_temporary/codesign/codesign.crt" || true
+    ym_bounded_guest_command remove-fixture-code-trust 10 sudo -n security remove-trusted-cert -d "$ym_temporary/codesign/codesign.crt" || true
+    if ym_code_fingerprint="$(python3 - "$ym_temporary/codesign/identity.json" <<'PYFINGERPRINT'
+import json,re,sys
+try:
+    with open(sys.argv[1]) as f:value=json.load(f)['fingerprint']
+    if not isinstance(value,str) or not re.fullmatch(r'[A-Fa-f0-9]{40}',value):raise ValueError()
+except (OSError,ValueError,KeyError):sys.exit(1)
+print(value)
+PYFINGERPRINT
+)"; then
+      ym_bounded_guest_command remove-fixture-code-certificate 10 sudo -n security delete-certificate \
+        -Z "$ym_code_fingerprint" /Library/Keychains/System.keychain || true
+    fi
   fi
   if [ -f "$ym_temporary/codesign/identity.keychain-db" ]; then
     ym_bounded_guest_command remove-fixture-keychain 10 security delete-keychain "$ym_temporary/codesign/identity.keychain-db" || true

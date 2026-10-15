@@ -60,6 +60,13 @@ subjectKeyIdentifier=hash
     keychain = directory / "identity.keychain-db"
     run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-sha256",
          "-config", str(config), "-keyout", str(key), "-out", str(cert)])
+    fingerprint = run(["openssl", "x509", "-in", str(cert), "-noout", "-fingerprint", "-sha1"])[0]
+    fingerprint = fingerprint.strip().split("=", 1)[1].replace(":", "")
+    if not re.fullmatch(r"[A-Fa-f0-9]{40}", fingerprint):
+        raise RuntimeError("Invalid fixture certificate fingerprint")
+    # Write only public identity metadata before trust setup, so even failed
+    # setup can delete precisely this certificate rather than a matching name.
+    (directory / "identity.json").write_text(json.dumps({"fingerprint": fingerprint}))
     compatibility = ["-legacy"] if run(["openssl", "version"])[0].startswith("OpenSSL 3") else []
     run(["openssl", "pkcs12", "-export", *compatibility, "-inkey", str(key), "-in", str(cert),
          "-out", str(p12), "-passout", "pass:" + password])
@@ -68,12 +75,10 @@ subjectKeyIdentifier=hash
     run(["security", "unlock-keychain", "-p", password, str(keychain)])
     run(["security", "import", str(p12), "-k", str(keychain), "-P", password, "-T", "/usr/bin/codesign"])
     run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", password, str(keychain)])
-    run(["security", "add-trusted-cert", "-r", "trustRoot", "-p", "codeSign", "-k", str(keychain), str(cert)])
-    fingerprint = run(["openssl", "x509", "-in", str(cert), "-noout", "-fingerprint", "-sha1"])[0]
-    fingerprint = fingerprint.strip().split("=", 1)[1].replace(":", "")
-    if not re.fullmatch(r"[A-Fa-f0-9]{40}", fingerprint):
-        raise RuntimeError("Invalid fixture certificate fingerprint")
-    (directory / "identity.json").write_text(json.dumps({"fingerprint": fingerprint}))
+    # Hosted runners have noninteractive sudo, while a per-user trust change
+    # requests GUI authentication. Only this disposable certificate is added.
+    run(["sudo", "-n", "security", "add-trusted-cert", "-d", "-r", "trustRoot", "-p", "codeSign",
+         "-k", "/Library/Keychains/System.keychain", str(cert)])
 
 
 def fixture_app(directory, app):
