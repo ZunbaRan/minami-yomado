@@ -26,6 +26,16 @@ static NSDictionary *FIdentity(pid_t pid, NSError **error) {
     if (!identity) FFail(error,2,@"Could not resolve the exact fixture process and window.");
     return identity;
 }
+static NSDictionary *FWindowDiagnostic(NSDictionary *window) {
+    if (!window) return @{};
+    NSDictionary *identity=window[@"identity"] ?: @{};
+    return @{@"pid":identity[@"pid"] ?: @0,@"windowID":identity[@"windowID"] ?: @0,
+        @"frame":window[@"frame"] ?: @{},@"displayID":window[@"displayID"] ?: @0};
+}
+static NSDictionary *FErrorDiagnostic(NSError *error) {
+    return error ? @{@"domain":error.domain,@"code":@(error.code),
+        @"description":error.localizedDescription} : @{};
+}
 @interface YMUpdateRuntimeWorkspace ()
 @property(nonatomic, copy) NSString *directory;
 @property(nonatomic) pid_t workPID;
@@ -88,6 +98,42 @@ static NSDictionary *FIdentity(pid_t pid, NSError **error) {
         });
     });
 }
+- (void)observeInitialMove:(NSDictionary *)workIdentity destination:(NSDictionary *)destination
+    probe:(NSDictionary *)probe deadline:(NSTimeInterval)deadline stableSamples:(NSUInteger)stableSamples
+    completion:(void (^)(NSDictionary *,NSError *))completion {
+    NSError *captureError=nil,*workError=nil,*probeError=nil;
+    NSDictionary *after=[self.backend captureWithProfiles:self.profiles error:&captureError];
+    NSDictionary *workAfter=[self.backend readWindow:workIdentity error:&workError];
+    NSDictionary *probeAfter=[self.backend readWindow:probe[@"identity"] error:&probeError];
+    NSArray *windows=after[@"windows"] ?: @[];
+    BOOL inventoryMatches=windows.count==1 && [windows[0][@"identity"] isEqual:workIdentity] &&
+        FFrameEqual(windows[0][@"frame"],destination);
+    BOOL workMatches=[workAfter[@"identity"] isEqual:workIdentity] && FFrameEqual(workAfter[@"frame"],destination);
+    BOOL probeMatches=[probeAfter[@"identity"] isEqual:probe[@"identity"]] && FFrameEqual(probeAfter[@"frame"],probe[@"frame"]);
+    BOOL matches=after && inventoryMatches && workMatches && probeMatches;
+    NSUInteger consecutive=matches ? stableSamples+1 : 0;
+    NSMutableArray *inventory=[NSMutableArray array];
+    for (NSDictionary *window in windows) [inventory addObject:FWindowDiagnostic(window)];
+    self.record(@"occupied-settle-sample",@{@"captureAvailable":@(after!=nil),@"inventory":inventory,
+        @"displays":after[@"displays"] ?: @[],@"expectedWork":FWindowDiagnostic(@{@"identity":workIdentity,@"frame":destination}),
+        @"currentWork":FWindowDiagnostic(workAfter),@"expectedProbe":FWindowDiagnostic(probe),
+        @"currentProbe":FWindowDiagnostic(probeAfter),@"captureError":FErrorDiagnostic(captureError),
+        @"workError":FErrorDiagnostic(workError),@"probeError":FErrorDiagnostic(probeError),
+        @"inventoryMatches":@(inventoryMatches),@"workMatches":@(workMatches),@"probeMatches":@(probeMatches),
+        @"stableSamples":@(consecutive)});
+    if (consecutive>=3) { completion(after,nil); return; }
+    if (NSProcessInfo.processInfo.systemUptime>=deadline) {
+        NSError *failure=captureError ?: workError ?: probeError;
+        if (!failure) FFail(&failure,4,@"The exact initial workspace inventory and probe did not settle within three seconds.");
+        completion(nil,failure); return;
+    }
+    // AX writes can reach CoreGraphics after the write returns. Wait only while
+    // constructing this fixture; production checkpoint admission stays unchanged.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(), ^{
+        [self observeInitialMove:workIdentity destination:destination probe:probe deadline:deadline
+            stableSamples:consecutive completion:completion];
+    });
+}
 - (void)prepareOccupiedWorkspace:(void (^)(BOOL,NSError *))completion {
     NSError *error=nil;
     self.record(@"occupied-preflight",@{@"accessibilityTrusted":@(AXIsProcessTrusted()),@"virtualAPIAvailable":@(VDVirtualDisplay.isAPIAvailable)});
@@ -108,13 +154,11 @@ static NSDictionary *FIdentity(pid_t pid, NSError **error) {
         if (![self.backend moveWindow:workIdentity fromFrame:work[@"frame"] toFrame:destination error:&failure]) {
             completion(NO,failure); return;
         }
-        NSDictionary *after=[self.backend captureWithProfiles:self.profiles error:&failure];
-        NSDictionary *probeAfter=[self.backend readWindow:probeIdentity error:&failure];
-        if (!after || [after[@"windows"] count]!=1 ||
-            ![after[@"windows"][0][@"identity"] isEqual:workIdentity] ||
-            !FFrameEqual(probeAfter[@"frame"],probe[@"frame"])) {
-            FFail(&failure,4,@"Owned inventory or untouched physical probe did not match."); completion(NO,failure); return;
-        }
+        [self observeInitialMove:workIdentity destination:destination probe:probe
+            deadline:NSProcessInfo.processInfo.systemUptime+3 stableSamples:0
+            completion:^(NSDictionary *after,NSError *settleError) {
+        NSError *failure=settleError;
+        if (!after) { completion(NO,failure); return; }
         NSMutableArray *unowned=[after[@"displays"] mutableCopy];
         [unowned filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item,NSDictionary *bindings) {
             (void)bindings; return ![item[@"displayID"] isEqual:@(self.display.displayID)];
@@ -127,6 +171,7 @@ static NSDictionary *FIdentity(pid_t pid, NSError **error) {
         if (!data || ![data writeToFile:self.baselinePath options:NSDataWritingAtomic error:&failure]) { completion(NO,failure); return; }
         self.record(@"occupied-ready",self.baseline);
         BOOL captured=[self captureNamed:@"occupied-before.png" error:&failure]; completion(captured,failure);
+        }];
     }];
 }
 - (void)recreateProfiles:(NSArray<NSDictionary *> *)profiles completion:(void (^)(BOOL,NSError *))completion {
