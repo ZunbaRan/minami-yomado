@@ -11,7 +11,7 @@
 // independently of client lifetimes. A lost response is never automatically retried.
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc != 2) { fprintf(stderr, "usage: YomadoWorkspace <private-state-directory>\n"); return 2; }
+        if (argc != 2) { fprintf(stderr, "usage: MinamiYomado <private-state-directory>\n"); return 2; }
         NSString *directory = [NSString stringWithUTF8String:argv[1]];
         struct stat st;
         if (lstat(directory.fileSystemRepresentation, &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077)) {

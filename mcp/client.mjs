@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 export class WorkspaceClient {
-  constructor({ directory = process.env.YOMADO_MCP_STATE_DIR || path.join(os.homedir(), 'Library/Application Support/yomado-mcp'),
-    executable = path.join(root, 'dist/Yomado Workspace.app/Contents/MacOS/YomadoWorkspace'), autostart = true, timeout = 120000 } = {}) {
+  constructor({ directory = process.env.MINAMI_YOMADO_STATE_DIR || process.env.YOMADO_MCP_STATE_DIR || path.join(os.homedir(), 'Library/Application Support/yomado-mcp'),
+    executable = path.join(root, 'dist/Minami Yomado.app/Contents/MacOS/MinamiYomado'), autostart = true, timeout = 120000 } = {}) {
     this.directory = directory; this.executable = executable; this.autostart = autostart; this.timeout = timeout;
     this.socket = path.join(directory, 'service.sock'); this.starting = null;
   }

@@ -28,7 +28,7 @@ test('MCP profile lifecycle persists across connections without creating display
   let client;
   async function connect() {
     const c = new Client({ name: 'workspace-test', version: '1' });
-    await c.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/server.mjs'], env: { ...process.env, YOMADO_MCP_STATE_DIR: directory } }));
+    await c.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/server.mjs'], env: { ...process.env, MINAMI_YOMADO_STATE_DIR: directory } }));
     return c;
   }
   async function call(name, args = {}) {

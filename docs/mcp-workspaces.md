@@ -1,4 +1,4 @@
-# MCP-managed workspaces and whole-desktop PiP
+# Minami Yomado: MCP workspaces and whole-desktop PiP
 
 This fork adds an MCP-first service alongside the original Yomado application. It reuses Yomado's virtual-display bridge and topology verification. Its independent native helper owns the displays and renders whole-desktop PiP; it does not use Minami's PiP or require Minami to run. Minami can separately operate applications in a workspace.
 
@@ -9,14 +9,18 @@ Requires a logged-in, unlocked macOS 14+ graphical session, Command Line Tools, 
 ```sh
 npm ci
 npm run build
-codex mcp add yomado_workspaces -- node /absolute/path/to/yomado/mcp/server.mjs
+codex mcp add minami_yomado -- node /absolute/path/to/minami-yomado/mcp/server.mjs
 ```
 
-Restart/reconnect the Codex session to discover the tools. Use an absolute Node path if the host cannot resolve `node`. The helper is built at `dist/Yomado Workspace.app`, with its own bundle identity `com.zunbaran.yomado.workspace`. The helper has no control-panel window, Dock icon, Sparkle dependency, or automatic updater. The original GUI and its updater remain separate and unchanged; do not build/install the original `Yomado.app` as the MCP service.
+Restart/reconnect the Codex session to discover the tools. Use an absolute Node path if the host cannot resolve `node`. The helper is built at `dist/Minami Yomado.app`, with its own bundle identity `com.zunbaran.yomado.workspace`. The helper has no control-panel window, Dock icon, Sparkle dependency, or automatic updater. The original GUI and its updater remain separate and unchanged; do not build/install the original `Yomado.app` as the MCP service.
 
 `service_status` reports permissions. macOS must grant Screen Recording for preview and Accessibility for placement to the responsible host/helper. The user grants permissions in System Settings; MCP does not bypass that step. No permission is needed for listing tools or editing stopped profiles.
 
-The default private state directory is `~/Library/Application Support/yomado-mcp` (0700). `YOMADO_MCP_STATE_DIR` selects an isolated directory; keep the Unix socket path shorter than 104 bytes. The helper log and persisted profiles live there. The socket accepts only the owning user's connections. No TCP listener is opened.
+The default private state directory is `~/Library/Application Support/yomado-mcp` (0700). `MINAMI_YOMADO_STATE_DIR` selects an isolated directory; keep the Unix socket path shorter than 104 bytes. The helper log and persisted profiles live there. The socket accepts only the owning user's connections. No TCP listener is opened.
+
+The Minami Yomado rename deliberately retains the original helper bundle identifier and default state directory to preserve permission identity and saved profiles. `YOMADO_MCP_STATE_DIR` remains a compatibility alias; `MINAMI_YOMADO_STATE_DIR` takes precedence. The legacy GUI app's branding and upstream license notices remain unchanged.
+
+If previously configured as `yomado_workspaces`, add `minami_yomado` with the new checkout path, then remove the old registration with `codex mcp remove yomado_workspaces`. Before moving a checkout, shut down its helper after restoring/stopping owned workspaces. New builds produce `Minami Yomado.app` and the `MinamiYomado` executable.
 
 ## Workflow and tool contract
 

@@ -1,4 +1,4 @@
-# Initial implementation contract
+# Minami Yomado: initial implementation contract
 
 Approved direction from the implementation conversation: fork Yomado into an MCP-first virtual-workspace manager, configure display settings through MCP, and provide independent live whole-display PiP. Preserve the distinction from Minami computer-use/browser automation.
 

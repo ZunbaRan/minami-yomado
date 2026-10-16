@@ -1,8 +1,10 @@
-# MCP workspace fork
+# Minami Yomado
 
-This fork adds **MCP-managed virtual displays and independent live whole-desktop PiP**. Codex can configure workspace names, resolution and HiDPI, move specific windows, open/resize a live viewer, and restore the workspace without clicking through the original control panel.
+Minami Yomado provides **MCP-managed virtual displays and independent live whole-desktop PiP**. Codex can configure workspace names, resolution and HiDPI, move specific windows, open/resize a live viewer, and restore the workspace without clicking through the original control panel.
 
 **Start here: [MCP build, Codex setup, tool workflow, and limitations](docs/mcp-workspaces.md).** The native helper is independent of Minami; Minami remains an optional application automation provider. This is a developer build, with live validation on Apple Silicon/macOS 27.
+
+For a colleague demo, see [the invoice reconciliation walkthrough](docs/demo-invoice-review.md).
 
 The original Yomado project documentation follows. Its GUI application and updater are separate from the new MCP helper.
 

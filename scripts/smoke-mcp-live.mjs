@@ -23,7 +23,7 @@ try {
     'tests/WorkspaceFixture.m', '-framework', 'AppKit', '-o', `${directory}/fixture`],
   { env: { ...process.env, DEVELOPER_DIR: process.env.DEVELOPER_DIR || '/Library/Developer/CommandLineTools' } });
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/server.mjs'],
-    env: { ...process.env, YOMADO_MCP_STATE_DIR: directory } }));
+    env: { ...process.env, MINAMI_YOMADO_STATE_DIR: directory } }));
   const permissions = await call('service_status');
   assert.ok(permissions.accessibility && permissions.screen_recording, 'Grant capture/control permission to the test host first.');
   const before = (await call('workspace_list')).displays;

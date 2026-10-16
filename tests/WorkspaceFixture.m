@@ -23,7 +23,7 @@ int main(void) {
             NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(70+i*550, 200, 520, 360)
                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
                 backing:NSBackingStoreBuffered defer:NO];
-            window.title = [NSString stringWithFormat:@"Yomado MCP Fixture %ld", (long)i+1]; window.releasedWhenClosed = NO;
+            window.title = [NSString stringWithFormat:@"Minami Yomado Demo %ld", (long)i+1]; window.releasedWhenClosed = NO;
             window.backgroundColor = i ? [NSColor colorWithRed:0.25 green:0.12 blue:0.28 alpha:1] : [NSColor colorWithRed:0.08 green:0.20 blue:0.25 alpha:1];
             NSTextField *title = [NSTextField labelWithString:window.title]; title.font = [NSFont boldSystemFontOfSize:26]; title.textColor = NSColor.whiteColor;
             title.frame = NSMakeRect(24, 275, 480, 50); [window.contentView addSubview:title];

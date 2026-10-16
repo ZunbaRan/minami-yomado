@@ -1,3 +1,11 @@
+# Minami Yomado
+
+通过 MCP 创建和配置虚拟工作屏，并提供独立的整屏实时画中画。Codex 可以设置名称、分辨率和 HiDPI，移动指定窗口，打开预览，并恢复窗口位置。
+
+[构建与 Codex 配置](docs/mcp-workspaces.md) · [面向同事的演示方案](docs/demo-invoice-review.md)
+
+以下为原始 Yomado 项目的说明。原版 GUI 应用及其更新器与 Minami Yomado 的 MCP helper 相互独立。
+
 <img src="docs/images/yomado-logo.png?v=night-window-20261013" alt="yomado 夜窗图标" width="64" align="right" />
 
 # yomado · 夜窗

@@ -1,9 +1,9 @@
 {
-  "name": "yomado-workspace-mcp",
+  "name": "minami-yomado",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "MCP-managed macOS virtual workspaces and independent desktop PiP",
+  "description": "Minami Yomado — MCP-managed macOS virtual workspaces and independent desktop PiP",
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "bash scripts/build-mcp.sh",

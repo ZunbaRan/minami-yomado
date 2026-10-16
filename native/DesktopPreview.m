@@ -41,7 +41,7 @@
             self.panel = [[YMPreviewPanel alloc] initWithContentRect:NSMakeRect(0, 0, 480, 270)
                 styleMask:NSWindowStyleMaskNonactivatingPanel | NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
                 backing:NSBackingStoreBuffered defer:NO];
-            self.panel.title = [@"Yomado Workspace — " stringByAppendingString:name];
+            self.panel.title = [@"Minami Yomado — " stringByAppendingString:name];
             self.panel.level = NSFloatingWindowLevel; self.panel.hidesOnDeactivate = NO;
             self.panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
             self.panel.releasedWhenClosed = NO; self.panel.delegate = self;
