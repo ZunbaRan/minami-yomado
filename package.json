@@ -1,0 +1,16 @@
+{
+  "name": "yomado-workspace-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP-managed macOS virtual workspaces and independent desktop PiP",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "bash scripts/build-mcp.sh",
+    "test": "node --test test/*.test.mjs",
+    "test:live": "node scripts/smoke-mcp-live.mjs",
+    "check": "node --check mcp/server.mjs && node --check mcp/client.mjs && node --check mcp/tools.mjs",
+    "mcp": "node mcp/server.mjs"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.20.0" }
+}

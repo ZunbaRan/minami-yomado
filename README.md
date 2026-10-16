@@ -1,3 +1,11 @@
+# MCP workspace fork
+
+This fork adds **MCP-managed virtual displays and independent live whole-desktop PiP**. Codex can configure workspace names, resolution and HiDPI, move specific windows, open/resize a live viewer, and restore the workspace without clicking through the original control panel.
+
+**Start here: [MCP build, Codex setup, tool workflow, and limitations](docs/mcp-workspaces.md).** The native helper is independent of Minami; Minami remains an optional application automation provider. This is a developer build, with live validation on Apple Silicon/macOS 27.
+
+The original Yomado project documentation follows. Its GUI application and updater are separate from the new MCP helper.
+
 <img src="docs/images/yomado-logo.png?v=night-window-20261013" alt="yomado night-window icon" width="64" align="right" />
 
 # yomado · 夜窗

@@ -1,6 +1,7 @@
 # Generated applications, archives, and test output.
 /dist/
 /test-output/
+/node_modules/
 /.build-deps/
 /.cache/
 *.dSYM/
