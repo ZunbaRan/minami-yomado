@@ -28,15 +28,20 @@ try {
   assert.ok(permissions.accessibility && permissions.screen_recording, 'Grant capture/control permission to the test host first.');
   const before = (await call('workspace_list')).displays;
   fixture = spawn(`${directory}/fixture`, [], { stdio: 'ignore' });
-  let windows = [];
+  let windows = [], previousGeometry, stableSamples = 0;
   const windowDeadline = Date.now() + 10000;
   while (Date.now() < windowDeadline) {
     if (fixture.exitCode !== null || fixture.signalCode !== null) throw new Error(`Fixture exited before becoming ready: ${fixture.exitCode ?? fixture.signalCode}`);
     windows = (await call('window_list')).windows.filter(w => w.pid === fixture.pid);
-    if (windows.length === 2) break;
+    const geometry = JSON.stringify(windows.map(w => [w.window_id, w.bounds]));
+    stableSamples = windows.length === 2 && geometry === previousGeometry ? stableSamples + 1 : 0;
+    previousGeometry = geometry;
+    // AppKit animates new windows through slightly inset frames before settling.
+    if (stableSamples >= 3) break;
     await delay(100);
   }
   assert.equal(windows.length, 2, 'Both native fixture windows must become visible before placement.');
+  assert.ok(stableSamples >= 3, 'Fixture window geometry must settle before recording restoration bounds.');
   const profile = await call('workspace_create', { name: 'MCP integration test', width: 1920, height: 1080 }); workspaceID = profile.id;
   const args = { workspace_id: workspaceID };
   const started = await call('workspace_start', args); assert.equal(started.running, true);
@@ -48,23 +53,37 @@ try {
   }
   const occupied = await client.callTool({ name: 'workspace_stop', arguments: args }); assert.equal(occupied.isError, true);
   const modeChange = await client.callTool({ name: 'workspace_configure', arguments: { ...args, hidpi: true } }); assert.equal(modeChange.isError, true);
-  await call('preview_open', { ...args, width: 640, height: 400, fps: 15 });
+  const opened = await call('preview_open', { ...args, fps: 15 });
+  assert.equal(opened.bounds.width, 480); assert.equal(opened.bounds.height, 300);
+  const reused = await call('preview_open', { ...args, width: 900, height: 600 });
+  assert.equal(reused.window_id, opened.window_id, 'Repeated opens reuse the same viewer');
+  assert.deepEqual(reused.bounds, opened.bounds, 'Repeated opens never resize the viewer');
   await delay(2200);
   const first = (await call('workspace_get', args)).preview; assert.equal(first.state, 'live'); assert.ok(first.frames > 0);
   await delay(1200); assert.ok((await call('workspace_get', args)).preview.frames > first.frames);
   await call('preview_configure', { ...args, width: 480, height: 300 });
+  // Exercise AppKit's real user-geometry notification path, not just configure.
+  execFileSync('osascript', ['-e', `tell application "System Events" to tell (first application process whose unix id is ${permissions.pid}) to set size of (first window whose name is "Minami Yomado — MCP integration test") to {400, 260}`]);
+  const resized = (await call('workspace_get', args)).preview;
+  assert.equal(resized.bounds.width, 400); assert.equal(resized.bounds.height, 260);
+  await call('preview_close', args);
+  const reopened = await call('preview_open', { ...args, width: 900, height: 600 });
+  assert.deepEqual(reopened.bounds, resized.bounds, 'Reopen ignores stale dimensions and restores manual resize');
   await call('preview_close', args); assert.equal((await call('workspace_get', args)).running, true);
   await call('workspace_restore', args);
   const restored = (await call('window_list')).windows;
   for (const w of windows) assert.deepEqual(restored.find(r => r.window_id === w.window_id).bounds, w.bounds);
   await call('workspace_stop', args);
+  await call('service_shutdown'); await delay(1600);
   await call('workspace_configure', { ...args, width: 1280, height: 720, hidpi: true });
   assert.equal((await call('workspace_start', args)).pixel_width, 2560);
-  await call('preview_open', { ...args, fps: 15 }); await delay(1500);
+  const restarted = await call('preview_open', { ...args, fps: 15 });
+  assert.deepEqual(restarted.bounds, resized.bounds, 'User geometry survives helper and display restart');
+  await delay(1500);
   assert.equal((await call('workspace_get', args)).preview.state, 'live');
   await call('workspace_stop', args); await call('workspace_destroy', args); workspaceID = null;
   assert.deepEqual((await call('workspace_list')).displays, before);
-  console.log('PASS: MCP display lifecycle, two exact window moves, live desktop frames, PiP configuration, occupied-stop refusal, exact restoration, HiDPI and unchanged physical displays.');
+  console.log('PASS: MCP lifecycle, exact restoration, live frames, compact PiP, idempotent open, manual-resize persistence across reopen/helper restart, HiDPI and unchanged physical displays.');
 } catch (error) { failed = true; console.error(error); process.exitCode = 1; }
 finally {
   // A failing test retains the owned display if restoration cannot be verified.

@@ -28,8 +28,8 @@ export const tools = [
     y: integer('Optional top offset within the virtual workspace, in points.', 0, 8192),
   }, ['workspace_id', 'window_id', 'pid']),
   tool('workspace_restore', 'Restore only windows tracked for this workspace to their original physical positions. Closed windows release their checkpoints.', workspace, ['workspace_id']),
-  tool('preview_open', 'Open an independent live whole-desktop PiP on the physical display. Existing open previews are returned unchanged. No Minami dependency.', {
-    ...workspace, width: integer('Floating panel width in points.', 240, 4096), height: integer('Floating panel height in points.', 160, 4096),
+  tool('preview_open', 'Ensure one independent live whole-desktop PiP is open. Reuse the existing viewer; do not close/reopen it between actions. Restore the last user size/position, even if stale dimensions are supplied. First-open default is compact 480×300. Use preview_configure only for an explicitly requested resize. No Minami dependency.', {
+    ...workspace, width: integer('Initial panel width only; ignored when saved geometry exists.', 240, 4096), height: integer('Initial panel height only; ignored when saved geometry exists.', 160, 4096),
     output_width: integer('Capture pixel width; default 1280.', 320, 3840), fps: integer('Capture frame-rate limit; default 30.', 1, 60),
     shows_cursor: { type: 'boolean', description: 'Include the shared system cursor; default true.' },
   }, ['workspace_id']),

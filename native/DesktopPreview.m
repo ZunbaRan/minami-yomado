@@ -1,5 +1,6 @@
 #import "DesktopPreview.h"
 #import "Common.h"
+#import "PreviewGeometry.h"
 #import "VDVirtualDisplay.h"
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <AVFoundation/AVFoundation.h>
@@ -26,12 +27,16 @@
 @property(nonatomic) NSInteger fps;
 @property(nonatomic) BOOL cursor;
 @property(nonatomic) NSTimer *monitor;
+@property(nonatomic) NSString *framePath;
+@property(nonatomic) NSString *frameSaveError;
+@property(nonatomic) BOOL rememberGeometry;
+@property(nonatomic) NSTimer *frameSaveTimer;
 @end
 
 @implementation YMDesktopPreview
-- (instancetype)initWithDisplayID:(CGDirectDisplayID)displayID name:(NSString *)name options:(NSDictionary *)options {
+- (instancetype)initWithDisplayID:(CGDirectDisplayID)displayID name:(NSString *)name options:(NSDictionary *)options framePath:(NSString *)framePath {
     if (!(self = [super init])) return nil;
-    _displayID = displayID; _phase = @"starting";
+    _displayID = displayID; _phase = @"starting"; _framePath = [framePath copy];
     _fps = [options[@"fps"] ?: @30 integerValue]; _outputWidth = [options[@"output_width"] ?: @1280 integerValue];
     _cursor = [options[@"shows_cursor"] ?: @YES boolValue];
     if (_fps < 1 || _fps > 60 || _outputWidth < 320 || _outputWidth > 3840) YMThrow(@"invalid_argument", @"fps must be 1–60 and output_width 320–3840.");
@@ -45,6 +50,7 @@
             self.panel.level = NSFloatingWindowLevel; self.panel.hidesOnDeactivate = NO;
             self.panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
             self.panel.releasedWhenClosed = NO; self.panel.delegate = self;
+            self.panel.minSize = NSMakeSize(240, 160);
             self.panel.contentView.wantsLayer = YES; self.panel.contentView.layer.backgroundColor = NSColor.blackColor.CGColor;
             self.video = [AVSampleBufferDisplayLayer layer]; self.video.videoGravity = AVLayerVideoGravityResizeAspect;
             [self.panel.contentView.layer addSublayer:self.video];
@@ -54,7 +60,18 @@
             [self.panel.contentView addSubview:self.label];
             return nil;
         });
-        [self configure:options];
+        YMMain(^id{
+            NSScreen *physical = [self physicalScreen];
+            CGFloat top = CGDisplayBounds(CGMainDisplayID()).size.height;
+            NSRect visible = physical.visibleFrame;
+            CGRect usable = CGRectMake(visible.origin.x, top-NSMaxY(visible), visible.size.width, visible.size.height);
+            NSData *data = [NSData dataWithContentsOfFile:self.framePath];
+            NSDictionary *saved = data ? YMPreviewSavedFrame([NSJSONSerialization JSONObjectWithData:data options:0 error:nil]) : nil;
+            [self placeOnPhysical:YMPreviewOpeningOptions(options, saved, usable)];
+            self.rememberGeometry = YES;
+            [self saveFrame];
+            return nil;
+        });
         __block SCShareableContent *content; __block NSError *captureError;
         dispatch_semaphore_t ready = dispatch_semaphore_create(0);
         [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:NO completionHandler:^(SCShareableContent *value, NSError *error) {
@@ -103,13 +120,17 @@
     } @catch (NSException *e) { [self close]; @throw e; }
     return self;
 }
-- (void)placeOnPhysical:(NSDictionary *)options {
+- (NSScreen *)physicalScreen {
     NSScreen *physical;
     for (NSScreen *screen in NSScreen.screens) {
         CGDirectDisplayID ident = [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
         if (ident == CGMainDisplayID() && ![VDVirtualDisplay isVirtualDisplay:ident]) { physical = screen; break; }
     }
     if (!physical) YMThrow(@"physical_main_required", @"No physical main screen is available for the preview.");
+    return physical;
+}
+- (void)placeOnPhysical:(NSDictionary *)options {
+    NSScreen *physical = [self physicalScreen];
     NSRect visible = physical.visibleFrame;
     CGFloat w = [options[@"width"] ?: @(self.panel.frame.size.width) doubleValue];
     CGFloat h = [options[@"height"] ?: @(self.panel.frame.size.height) doubleValue];
@@ -121,8 +142,30 @@
     if (!NSContainsRect(visible, frame)) YMThrow(@"invalid_argument", @"Preview frame must stay within the physical main display's usable area.");
     [self.panel setFrame:frame display:YES]; self.video.frame = self.panel.contentView.bounds;
 }
-- (void)configure:(NSDictionary *)options { YMMain(^id{ [self placeOnPhysical:options]; return nil; }); }
-- (void)windowDidResize:(NSNotification *)notification { (void)notification; self.video.frame = self.panel.contentView.bounds; }
+- (void)saveFrame {
+    [self.frameSaveTimer invalidate]; self.frameSaveTimer = nil;
+    if (!self.rememberGeometry) return;
+    NSRect f = self.panel.frame; CGFloat top = CGDisplayBounds(CGMainDisplayID()).size.height;
+    NSDictionary *frame = YMRect(CGRectMake(f.origin.x, top-NSMaxY(f), f.size.width, f.size.height));
+    NSError *error;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:frame options:0 error:&error];
+    BOOL saved = data && [data writeToFile:self.framePath options:NSDataWritingAtomic error:&error];
+    self.frameSaveError = saved ? nil : (error.localizedDescription ?: @"Could not save preview geometry.");
+}
+- (void)scheduleFrameSave {
+    if (!self.rememberGeometry || [self.phase isEqual:@"closed"]) return;
+    [self.frameSaveTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.frameSaveTimer = [NSTimer scheduledTimerWithTimeInterval:0.3 repeats:NO block:^(NSTimer *timer) {
+        (void)timer; [weakSelf saveFrame];
+    }];
+}
+- (void)configure:(NSDictionary *)options { YMMain(^id{ [self placeOnPhysical:options]; [self saveFrame]; return nil; }); }
+- (void)windowDidResize:(NSNotification *)notification {
+    (void)notification; self.video.frame = self.panel.contentView.bounds; [self scheduleFrameSave];
+}
+- (void)windowDidMove:(NSNotification *)notification { (void)notification; [self scheduleFrameSave]; }
+- (void)windowDidEndLiveResize:(NSNotification *)notification { (void)notification; [self saveFrame]; }
 - (void)windowWillClose:(NSNotification *)notification { (void)notification; [self close]; }
 - (void)fail:(NSString *)reason {
     if ([self.phase isEqual:@"closed"] || [self.phase isEqual:@"error"]) return;
@@ -164,12 +207,14 @@
         return @{@"display_id":@(self.displayID), @"window_id":@(self.panel.windowNumber), @"state":self.phase,
             @"frames":@(self.frames), @"last_frame_age_ms":self.lastFrame ? @((CACurrentMediaTime()-self.lastFrame)*1000) : NSNull.null,
             @"error":self.failure ?: (id)NSNull.null, @"fps_limit":@(self.fps), @"output_width":@(self.outputWidth), @"output_height":@(self.outputHeight),
+            @"geometry_save_error":self.frameSaveError ?: (id)NSNull.null,
             @"shows_cursor":@(self.cursor), @"bounds":YMRect(CGRectMake(f.origin.x, top-NSMaxY(f), f.size.width, f.size.height))};
     });
 }
 - (void)close {
     YMMain(^id{
         if ([self.phase isEqual:@"closed"]) return nil;
+        [self saveFrame];
         self.phase = @"closed"; [self.monitor invalidate]; self.monitor = nil;
         self.panel.delegate = nil; [self.panel close]; [self.video flushAndRemoveImage];
         [self.stream stopCaptureWithCompletionHandler:^(NSError *e) { (void)e; }];

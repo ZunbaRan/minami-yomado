@@ -1,6 +1,6 @@
 # Minami Yomado demo: reconcile an invoice and write a review memo
 
-Status: proposed presentation script. The underlying two-window PiP, native input and restoration have been tested; this Preview/TextEdit workflow still needs a rehearsal before being presented live. No demo documents have been generated yet.
+Status: Preview/TextEdit rehearsal completed on 2026-10-16 with two synthetic PDFs and a saved $130 discrepancy memo. The first rehearsal also exposed disruptive viewer resizing/reopening; the presentation flow below now keeps a compact, persistent viewer. Finder presentation and Save dialogs still require separate rehearsal.
 
 ## The story
 
@@ -27,9 +27,9 @@ Suggested output: `Output/invoice-review.rtf`, containing a short comparison tab
 
 ## Visible workspace
 
-Use a 1920×1080 virtual display named `Invoice Review`. Arrange two separate Preview PDF windows across the left two-thirds and a TextEdit memo window on the right. Finder briefly shows the task folder and later the saved output. Use explicit task window IDs; do not move other Preview, Finder or TextEdit windows.
+Use a 2240×1080 virtual display named `Invoice Review`. Arrange two separate Preview PDF windows across the left two-thirds and a TextEdit memo window on the right. Finder briefly shows the task folder and later the saved output. Use explicit task window IDs; do not move other Preview, Finder or TextEdit windows.
 
-On the physical screen, keep the presenter’s notes open alongside a roughly 900×550 desktop PiP. Enlarge the PiP for the document comparison; shrink it afterward to show that the workspace continues to exist. PiP is read-only: move and resize its frame, but do not imply that clicking its pixels controls the remote workspace.
+On the physical screen, keep the presenter’s notes open alongside a compact desktop PiP (480×300 by default, or the user’s last chosen size). Let the presenter resize it when desired; do not override their size. Keep this same viewer open throughout the task. PiP is read-only: move and resize its frame, but do not imply that clicking its pixels controls the remote workspace.
 
 ## Three-to-four-minute presentation
 
@@ -39,14 +39,16 @@ On the physical screen, keep the presenter’s notes open alongside a roughly 90
 | 0:25–1:10 | Two PDF windows move into view; Codex inspects quantities and charges. | Several documents remain visible in one desktop composition. |
 | 1:10–2:20 | The agent switches to TextEdit and writes the findings while both PDFs remain visible. | Application automation by Minami, observation by Minami Yomado. |
 | 2:20–2:50 | Save the memo into the task folder; show the file in Finder. | A real cross-application result, not a synthetic counter. |
-| 2:50–3:20 | Close and reopen the PiP; the workspace and documents are still there. | Viewer lifetime is independent of workspace lifetime. |
+| 2:50–3:20 | Leave the completed documents and memo visible in the same PiP. | Persistent observation across the entire task. |
 | 3:20–3:50 | Restore task windows and stop the virtual display. | Explicit ownership and cleanup. |
 
 Timing is a presentation target, not a measured agent runtime. If the task runs longer, explain the handoff between the workspace manager and input tools instead of rushing tool execution.
 
 ## Copyable demo prompt
 
-> Use Minami Yomado to create a 1920×1080 workspace called “Invoice Review” and show its whole-desktop PiP on my physical display. In the prepared “Minami Yomado Demo” folder, open purchase-order.pdf and invoice.pdf in separate Preview windows. Use Minami computer-use to compare them visually, then write a concise discrepancy report in TextEdit and save it as Output/invoice-review.rtf. Arrange the two PDFs and report so I can follow all three together. Move only the windows opened for this task. Do not send anything externally. Keep the workspace and PiP open when the report is saved so I can show the result.
+> Use Minami Yomado to create a 2240×1080 workspace called “Invoice Review” and show its whole-desktop PiP on my physical display. Use the compact default or my saved size; keep one viewer open and do not enlarge or reopen it during the task. In the prepared “Minami Yomado Demo” folder, open purchase-order.pdf and invoice.pdf in separate Preview windows. Use Minami computer-use to compare them visually, then write a concise discrepancy report in TextEdit and save it as Output/invoice-review.rtf. Arrange the two PDFs and report so I can follow all three together. Move only the windows opened for this task. Do not send anything externally. Keep the workspace and PiP open when the report is saved so I can show the result.
+
+Only demonstrate closing/reopening the viewer if the presenter explicitly asks. Routine work does not need this.
 
 Finish with a second instruction:
 

@@ -206,7 +206,8 @@
             if ([phase isEqual:@"closed"] || [phase isEqual:@"error"]) { [self.previews[key] close]; [self.previews removeObjectForKey:key]; }
             else return [self.previews[key] status];
         }
-        self.previews[key] = [[YMDesktopPreview alloc] initWithDisplayID:d.displayID name:p[@"name"] options:a];
+        NSString *framePath = [[self.file stringByDeletingLastPathComponent] stringByAppendingPathComponent:[@"preview-" stringByAppendingFormat:@"%@.json", key]];
+        self.previews[key] = [[YMDesktopPreview alloc] initWithDisplayID:d.displayID name:p[@"name"] options:a framePath:framePath];
         return [self.previews[key] status];
     }
     if ([method isEqual:@"workspace_start"]) return [self start:key];
@@ -225,6 +226,8 @@
         if (self.displays[key]) YMThrow(@"workspace_running", @"Stop the workspace before deleting its profile.");
         [self checkRecovery]; [self.profiles removeObjectForKey:key];
         @try { [self save]; } @catch (NSException *e) { self.profiles[key] = p; @throw e; }
+        NSString *framePath = [[self.file stringByDeletingLastPathComponent] stringByAppendingPathComponent:[@"preview-" stringByAppendingFormat:@"%@.json", key]];
+        [[NSFileManager defaultManager] removeItemAtPath:framePath error:nil];
         return @{@"deleted":@YES, @"workspace_id":key};
     }
     YMThrow(@"unknown_method", @"Unknown workspace operation."); return @{};
