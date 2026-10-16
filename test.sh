@@ -33,6 +33,8 @@ ym_sdk="$(DEVELOPER_DIR="$ym_developer" /usr/bin/xcrun --sdk macosx --show-sdk-p
 
 # Foundation-only update policy and simulated transport tests.
 bash "$ym_root/scripts/test-updates.sh"
+bash "$ym_root/scripts/test-automatic-updater.sh"
+bash "$ym_root/scripts/test-update-workspace-recovery.sh"
 
 # Pure injected backend/controller regressions; never touch live displays.
 bash "$ym_root/scripts/test-display-topology.sh"

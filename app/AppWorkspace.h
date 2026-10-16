@@ -44,6 +44,11 @@ FOUNDATION_EXPORT NSString * const YMAppWorkspaceErrorDomain;
 - (BOOL)restoreDisplayID:(CGDirectDisplayID)displayID error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)restoreAll:(NSError * _Nullable * _Nullable)error;
 - (BOOL)needsRestoreForDisplayID:(CGDirectDisplayID)displayID;
+// Update-only handoff. These methods preserve existing physical origins for
+// exact extant windows, never application-level matching or content state.
+- (nullable NSArray<NSDictionary *> *)restartOriginCheckpointsWithError:(NSError * _Nullable * _Nullable)error;
+- (BOOL)adoptRestartOriginCheckpoints:(NSArray<NSDictionary *> *)checkpoints
+                               error:(NSError * _Nullable * _Nullable)error;
 
 // Compatibility with the single-display controller. Multi-display callers
 // should use the explicit destination/source methods above.
