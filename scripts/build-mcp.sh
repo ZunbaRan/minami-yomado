@@ -1,11 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 ym_root="$(cd "$(dirname "$0")/.." && pwd -P)"
+ym_output="${MINAMI_YOMADO_BUILD_DIR:-$ym_root/dist}"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
 ym_stage="$(mktemp -d "${TMPDIR:-/tmp}/yomado-mcp-build.XXXXXX")"
 trap 'rm -rf "$ym_stage"' EXIT
 ym_bundle="$ym_stage/Minami Yomado.app"
-mkdir -p "$ym_bundle/Contents/MacOS" "$ym_root/dist"
+mkdir -p "$ym_bundle/Contents/MacOS" "$ym_output"
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=14.0 \
   -I "$ym_root/bridge" -I "$ym_root/native" \
   "$ym_root"/native/*.m "$ym_root/bridge/VDVirtualDisplay.m" "$ym_root/bridge/YMDisplayTopology.m" \
@@ -30,6 +31,6 @@ PLIST
 codesign --force --sign - "$ym_bundle"
 codesign --verify --deep --strict "$ym_bundle"
 # A running helper retains its old inode until explicitly shut down.
-rm -rf "$ym_root/dist/Minami Yomado.app"
-ditto "$ym_bundle" "$ym_root/dist/Minami Yomado.app"
-printf 'Built %s\n' "$ym_root/dist/Minami Yomado.app"
+rm -rf "$ym_output/Minami Yomado.app"
+ditto "$ym_bundle" "$ym_output/Minami Yomado.app"
+printf 'Built %s\n' "$ym_output/Minami Yomado.app"

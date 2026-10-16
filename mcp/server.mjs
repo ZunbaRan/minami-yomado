@@ -8,7 +8,7 @@ import { tools, validate } from './tools.mjs';
 const client = new WorkspaceClient();
 const server = new Server({ name: 'minami-yomado', version: '0.1.0' }, {
   capabilities: { tools: {} },
-  instructions: 'Manage task-owned virtual displays and whole-desktop previews. Keep a physical display main. Create a stopped profile, configure it, then start. Move only explicitly authorized window IDs. Virtual displays share the login and input session; use Minami for application input. Restore moved windows before stopping. Native workspaces survive MCP disconnect. Never retry a timed-out mutation without inspecting state.',
+  instructions: 'Manage task-owned virtual displays and whole-desktop previews. Check service_status for permissions first; the user grants them. Keep a physical display main. Create a stopped profile, configure it, then start. Move only explicitly authorized window IDs. Open one compact PiP and keep it open during work; respect saved user size and position. Never enlarge or close/reopen it between actions, or reopen a viewer the user closed without a viewing request. Virtual displays share the login and input session; use Minami for application input. Restore moved windows before stopping. Native workspaces survive MCP disconnect. Never retry a timed-out mutation without inspecting state.',
 });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {

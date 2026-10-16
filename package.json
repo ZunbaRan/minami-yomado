@@ -7,9 +7,12 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "bash scripts/build-mcp.sh",
+    "setup": "node scripts/install.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "release:package": "node scripts/package-release.mjs",
     "test": "node --test test/*.test.mjs",
     "test:live": "node scripts/smoke-mcp-live.mjs",
-    "check": "node --check mcp/server.mjs && node --check mcp/client.mjs && node --check mcp/tools.mjs",
+    "check": "node --check mcp/server.mjs && node --check mcp/client.mjs && node --check mcp/tools.mjs && node --check scripts/install.mjs && node --check scripts/doctor.mjs && node --check scripts/package-release.mjs && bash -n scripts/install.sh",
     "mcp": "node mcp/server.mjs"
   },
   "dependencies": { "@modelcontextprotocol/sdk": "^1.20.0" }

@@ -2,6 +2,8 @@
 
 This fork adds an MCP-first service alongside the original Yomado application. It reuses Yomado's virtual-display bridge and topology verification. Its independent native helper owns the displays and renders whole-desktop PiP; it does not use Minami's PiP or require Minami to run. Minami can separately operate applications in a workspace.
 
+For the prebuilt release, automatic Codex registration and other MCP clients, start with [the installation quick start](quickstart.md). The build instructions below are for source development.
+
 ## Build and configure Codex
 
 Requires a logged-in, unlocked macOS 14+ graphical session, Command Line Tools, and Node.js 20+. Native Apple Silicon/macOS 27 is the current live-test environment; other OS/hardware combinations need validation. Virtual-display creation uses private macOS APIs.
